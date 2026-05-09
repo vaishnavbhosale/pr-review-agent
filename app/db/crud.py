@@ -1,6 +1,6 @@
 import logging
 from sqlalchemy.orm import Session
-from app.db.models import PRReview, ReviewComment
+from app.db.models import PRReview, ReviewComment, EvaluationMetrics
 from app.core.schemas import PRContext, ReviewResult
 
 logger = logging.getLogger(__name__)
@@ -10,15 +10,13 @@ def save_review(
     db: Session,
     context: PRContext,
     result: ReviewResult,
-    posted: bool
+    posted: bool,
+    comment_evaluations: list = None
 ) -> PRReview:
     """
     Saves a completed PR review to the database.
-
-    Creates one PRReview row and one ReviewComment row
-    for each comment the AI made.
-
-    Returns the saved PRReview object with its generated ID.
+    Also saves evaluation results for each comment
+    if comment_evaluations is provided.
     """
 
     logger.info(
@@ -27,7 +25,6 @@ def save_review(
     )
 
     try:
-        # Create the parent review record
         review = PRReview(
             repo_name=context.repo_name,
             pr_number=context.pr_number,
@@ -40,16 +37,18 @@ def save_review(
         )
 
         db.add(review)
-
-        # Flush sends the INSERT to the database but does not
-        # commit yet. This gives us the auto-generated review.id
-        # which we need for the foreign key in ReviewComment
         db.flush()
 
         logger.info(f"[DB] PRReview created with ID: {review.id}")
 
-        # Create one comment record for each AI comment
-        for c in result.comments:
+        # Save each comment with its evaluation result
+        for i, c in enumerate(result.comments):
+
+            # Get evaluation for this comment if available
+            is_valid = None
+            if comment_evaluations and i < len(comment_evaluations):
+                is_valid = comment_evaluations[i]
+
             comment = ReviewComment(
                 review_id=review.id,
                 filename=c.filename,
@@ -57,29 +56,66 @@ def save_review(
                 issue=c.issue,
                 suggestion=c.suggestion,
                 severity=c.severity,
+                is_valid_line=is_valid,
             )
             db.add(comment)
 
-        # Commit saves everything to disk permanently
         db.commit()
-
-        # Refresh loads the final state from the database
-        # including server-generated fields like created_at
         db.refresh(review)
 
         logger.info(
             f"[DB] Saved successfully — "
             f"Review ID: {review.id} | "
-            f"Comments saved: {len(result.comments)}"
+            f"Comments: {len(result.comments)}"
         )
 
         return review
 
     except Exception as e:
-        # Roll back everything if anything failed
-        # This ensures we never have partial data in the database
         db.rollback()
         logger.error(f"[DB] Failed to save review: {e}")
+        raise
+
+
+def save_evaluation_metrics(
+    db: Session,
+    review_id: int,
+    metrics: dict
+) -> EvaluationMetrics:
+    """
+    Saves computed evaluation metrics for a review.
+    One metrics row per review.
+    """
+
+    logger.info(f"[DB] Saving evaluation metrics for review {review_id}")
+
+    try:
+        eval_metrics = EvaluationMetrics(
+            review_id=review_id,
+            total_comments=metrics["total_comments"],
+            hallucinated_comments=metrics["hallucinated_comments"],
+            hallucination_rate=metrics["hallucination_rate"],
+            files_covered=metrics["files_covered"],
+            total_files=metrics["total_files"],
+            coverage_rate=metrics["coverage_rate"],
+            quality_score=metrics["quality_score"],
+        )
+
+        db.add(eval_metrics)
+        db.commit()
+        db.refresh(eval_metrics)
+
+        logger.info(
+            f"[DB] Metrics saved — "
+            f"Quality: {eval_metrics.quality_score} | "
+            f"Hallucination rate: {eval_metrics.hallucination_rate}%"
+        )
+
+        return eval_metrics
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[DB] Failed to save metrics: {e}")
         raise
 
 
@@ -90,7 +126,6 @@ def get_review_by_pr(
 ) -> PRReview:
     """
     Fetches the most recent review for a specific PR.
-    Returns None if no review exists for this PR.
     """
 
     review = db.query(PRReview).filter(
@@ -117,7 +152,6 @@ def get_all_reviews(
 ) -> list:
     """
     Fetches the most recent reviews across all repositories.
-    Limited to 50 by default to avoid loading too much data.
     """
 
     reviews = db.query(PRReview).order_by(
@@ -132,7 +166,6 @@ def get_all_reviews(
 def get_stats(db: Session) -> dict:
     """
     Returns summary statistics across all reviews.
-    Useful for monitoring and dashboards.
     """
 
     total = db.query(PRReview).count()
@@ -149,9 +182,65 @@ def get_stats(db: Session) -> dict:
         ReviewComment.severity == "critical"
     ).count()
 
+    hallucinated = db.query(ReviewComment).filter(
+        ReviewComment.is_valid_line == False
+    ).count()
+
+    valid_comments = db.query(ReviewComment).filter(
+        ReviewComment.is_valid_line == True
+    ).count()
+
     return {
         "total_reviews": total,
         "approved": approved,
         "rejected": rejected,
         "critical_comments_found": critical_comments,
+        "hallucinated_comments": hallucinated,
+        "valid_comments": valid_comments,
+    }
+
+
+def get_evaluation_report(db: Session) -> dict:
+    """
+    Returns aggregated evaluation metrics across all reviews.
+    This is your AI quality dashboard.
+    """
+
+    all_metrics = db.query(EvaluationMetrics).all()
+
+    if not all_metrics:
+        return {
+            "message": "No evaluation data yet",
+            "total_reviews_evaluated": 0,
+        }
+
+    total = len(all_metrics)
+
+    avg_quality = sum(
+        m.quality_score for m in all_metrics
+    ) / total
+
+    avg_hallucination = sum(
+        m.hallucination_rate for m in all_metrics
+    ) / total
+
+    avg_coverage = sum(
+        m.coverage_rate for m in all_metrics
+    ) / total
+
+    total_hallucinations = sum(
+        m.hallucinated_comments for m in all_metrics
+    )
+
+    total_comments = sum(
+        m.total_comments for m in all_metrics
+    )
+
+    return {
+        "total_reviews_evaluated": total,
+        "average_quality_score": round(avg_quality, 2),
+        "average_hallucination_rate": round(avg_hallucination, 2),
+        "average_coverage_rate": round(avg_coverage, 2),
+        "total_comments_made": total_comments,
+        "total_hallucinations_detected": total_hallucinations,
     }
