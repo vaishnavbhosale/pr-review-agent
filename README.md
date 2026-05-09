@@ -1,181 +1,235 @@
-# PR Review Agent — Multi-Agent AI Code Review System
+# PR Review Agent
 
-An automated Pull Request review system that uses multiple AI agents 
-to fetch, review, evaluate, and post code reviews on GitHub PRs. 
-Built with FastAPI, Groq (Llama 3.3-70b), and SQLAlchemy.
+A production-style multi-agent system that automatically reviews GitHub Pull Requests using AI. When a developer opens a PR, the system fetches the diff, sends it to Llama 3.3-70b via Groq, evaluates the review quality, and posts structured feedback back to GitHub — all without human involvement.
 
----
-
-## What it does
-
-When a developer opens a Pull Request on GitHub, this system automatically:
-
-1. Fetches the PR diff and changed files from GitHub API
-2. Sends the code changes to Llama 3.3-70b via Groq for review
-3. Evaluates the AI review for hallucinations and coverage
-4. Posts a structured, professional review back to the GitHub PR
-5. Saves all results and metrics to a database for analytics
-
-The developer receives a review with an overall score, specific 
-inline comments on problematic lines, and severity classifications 
-— without any human reviewer involvement.
+Built with FastAPI, Groq, SQLAlchemy, and PyGithub.
 
 ---
 
-## System Architecture
+## How It Works
+
+```
 GitHub PR Opened
-│
-▼
-POST /webhook/github  ←── FastAPI server
-│
-│  Verify HMAC-SHA256 signature
-│  Return 202 immediately
-│
-▼
-Orchestrator  ←── Background task
-│
-├── Stage 1: FetcherAgent
-│     └── GitHub API → PRContext
-│
-├── Stage 2: ReviewerAgent
-│     └── Groq API (Llama 3) → ReviewResult
-│
-├── Stage 3: EvaluatorAgent
-│     └── PRContext + ReviewResult → Metrics
-│
-├── Stage 4: PosterAgent
-│     └── ReviewResult → GitHub PR Comment
-│
-└── Stage 5: Database
-└── Save review + metrics → SQLite
+        │
+        ▼
+POST /webhook/github          ← FastAPI verifies HMAC-SHA256 signature
+        │                       Returns 202 immediately
+        ▼
+   Orchestrator                ← Background task, retries on failure
+        │
+        ├── Stage 1: FetcherAgent
+        │         GitHub API → PR metadata + file diffs → PRContext
+        │
+        ├── Stage 2: ReviewerAgent
+        │         PRContext → Groq (Llama 3.3-70b) → ReviewResult
+        │
+        ├── Stage 3: EvaluatorAgent
+        │         ReviewResult × PRContext → hallucination rate, coverage, quality score
+        │
+        ├── Stage 4: PosterAgent
+        │         ReviewResult → GitHub PR review (inline comments + summary)
+        │
+        └── Stage 5: Database
+                  Save review + evaluation metrics → SQLite / PostgreSQL
+```
+
+The developer sees a structured review with an overall score (1–10), inline comments on specific lines, severity classifications (critical / warning / suggestion), and an approve or request-changes verdict.
 
 ---
 
-## Why this architecture
+## Features
 
-**Multi-agent design** — Each agent has one responsibility.
-If the GitHub API changes, only the FetcherAgent needs updating.
-If we switch from Groq to OpenAI, only the ReviewerAgent changes.
-Agents are independently testable and replaceable.
+- **HMAC-SHA256 webhook verification** — rejects fake requests at the door
+- **Async pipeline** — returns 202 to GitHub immediately, reviews in background
+- **Structured JSON output** — AI response is parsed and validated against Pydantic schemas
+- **Evaluation layer** — measures hallucination rate, coverage rate, and quality score on every review
+- **Graceful degradation** — if inline comments fail, falls back to posting the summary only
+- **Retry logic** — pipeline retries up to 2 times on failure with delay
+- **Persistent storage** — every review and its metrics saved to database
+- **SQLite → PostgreSQL ready** — change one environment variable
 
-**Async pipeline** — FastAPI responds to GitHub in milliseconds.
-The review runs in the background. GitHub never times out.
-Multiple PRs can be reviewed concurrently.
+---
 
-**Evaluation layer** — We do not blindly trust the AI.
-Every comment is checked against the actual diff.
-We track hallucination rate, coverage, and quality score over time.
+## Agent Design
 
-**SQLite first, PostgreSQL ready** — Zero infrastructure to start.
-Change one environment variable to switch to PostgreSQL.
-All queries use SQLAlchemy ORM — no raw SQL, no migration needed.
+Each agent has one responsibility and no knowledge of the others. They are independently testable and replaceable.
+
+| Agent | Responsibility |
+|---|---|
+| FetcherAgent | Calls GitHub API, builds PRContext with files and metadata |
+| ReviewerAgent | Builds prompt, calls Groq, parses JSON response into ReviewResult |
+| EvaluatorAgent | Validates comments against actual diff, computes quality metrics |
+| PosterAgent | Formats ReviewResult as Markdown, posts to GitHub PR |
+
+**Design principles:**
+- Single responsibility — one agent, one job
+- Fail loudly — exceptions are logged and re-raised, never swallowed silently
+- Graceful degradation — fallbacks ensure partial success over total failure
+- Stateless — agents take input, return output, hold no internal state
+
+---
+
+## Evaluation Layer
+
+The EvaluatorAgent automatically measures AI review quality without human involvement.
+
+**Hallucination Rate**
+The AI occasionally comments on lines that do not exist in the diff. Every comment's line number is cross-referenced against the actual diff. Comments on non-existent lines are flagged as hallucinations.
+
+```
+Hallucination Rate = hallucinated comments / total comments × 100
+```
+
+**Coverage Rate**
+What percentage of changed files received at least one comment.
+
+```
+Coverage Rate = files with comments / total files changed × 100
+```
+
+**Quality Score**
+A composite score from 0 to 100.
+
+```
+Quality Score = 100 − (hallucination rate × 0.5) + (coverage rate × 0.1)
+                clamped between 0 and 100
+```
+
+| Quality Score | Meaning |
+|---|---|
+| 90 – 100 | Excellent — AI is accurate and thorough |
+| 70 – 90 | Good — minor hallucination or coverage gaps |
+| 50 – 70 | Fair — prompt tuning recommended |
+| Below 50 | Poor — significant hallucination problem |
 
 ---
 
 ## Tech Stack
 
-| Technology | Purpose | Why |
-|---|---|---|
-| Python 3.11 | Language | Standard for AI/ML work |
-| FastAPI | Web framework | Async, fast, auto-docs |
-| Uvicorn | ASGI server | Runs FastAPI in production |
-| Groq API | LLM inference | Fastest Llama 3 inference |
-| Llama 3.3-70b | AI model | Open weight, structured output |
-| PyGithub | GitHub integration | Handles auth, pagination, rate limits |
-| SQLAlchemy | ORM | Database portability |
-| SQLite | Database | Zero infrastructure, file based |
-| Pydantic | Data validation | Validates AI response structure |
-| python-dotenv | Config | Secure secret management |
+| Technology | Purpose |
+|---|---|
+| Python 3.11 | Language |
+| FastAPI | Web framework — async, fast, auto-docs |
+| Uvicorn | ASGI server |
+| Groq API | LLM inference — fastest Llama 3 inference available |
+| Llama 3.3-70b | AI model — open weight, reliable structured output |
+| PyGithub | GitHub API integration — handles auth, pagination, rate limits |
+| SQLAlchemy | ORM — database portability, no raw SQL |
+| SQLite | Default database — zero infrastructure, file-based |
+| Pydantic | Data validation — validates AI response structure |
+| python-dotenv | Config — secure secret management |
 
 ---
 
-## Folder Structure
+## Project Structure
+
+```
 pr-review-agent/
 ├── app/
-│   ├── main.py                 # FastAPI server, webhook receiver
-│   ├── config.py               # Settings from .env file
+│   ├── main.py                 # FastAPI app, webhook endpoint
+│   ├── config.py               # Settings loaded from .env
 │   ├── agents/
-│   │   ├── fetcher.py          # Agent 1: fetch PR from GitHub
+│   │   ├── fetcher.py          # Agent 1: fetch PR from GitHub API
 │   │   ├── reviewer.py         # Agent 2: review with Groq LLM
-│   │   ├── poster.py           # Agent 3: post review to GitHub
+│   │   └── poster.py           # Agent 4: post review to GitHub PR
 │   ├── core/
-│   │   ├── orchestrator.py     # Pipeline controller
-│   │   ├── evaluator.py        # Agent 4: evaluate review quality
-│   │   ├── prompts.py          # All LLM prompt templates
+│   │   ├── orchestrator.py     # Pipeline controller with retry logic
+│   │   ├── evaluator.py        # Agent 3: evaluate review quality
+│   │   ├── prompts.py          # System prompt and user prompt builder
 │   │   └── schemas.py          # Pydantic models and dataclasses
 │   └── db/
-│       ├── database.py         # SQLAlchemy engine and session
-│       ├── models.py           # ORM models
-│       └── crud.py             # Database read/write functions
+│       ├── database.py         # SQLAlchemy engine and session factory
+│       ├── models.py           # ORM models — PRReview, ReviewComment
+│       └── crud.py             # Database read/write operations
 ├── tests/
-│   ├── test_webhook.py
-│   └── test_agents.py
+│   ├── test_webhook.py         # Webhook verification and routing tests
+│   └── test_agents.py          # Agent unit tests with mocked APIs
 ├── requirements.txt
 ├── .env.example
 └── README.md
+```
 
 ---
 
-## How to Run
+## Setup
 
 ### Prerequisites
 
 - Python 3.11+
-- Groq API key — https://console.groq.com
+- Groq API key — [console.groq.com](https://console.groq.com)
 - GitHub Personal Access Token with `repo` scope
+- A GitHub repository with webhook access
 
-### Setup
+### Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/vaishnavbhosale/pr-review-agent
 cd pr-review-agent
 
-# Create virtual environment
+# Create and activate virtual environment
 python -m venv venv
-
-# Activate — Mac/Linux
-source venv/bin/activate
-
-# Activate — Windows
-venv\Scripts\activate
+source venv/bin/activate        # Mac / Linux
+venv\Scripts\activate           # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment file
+# Configure environment
 cp .env.example .env
-# Fill in your real API keys in .env
+# Fill in your API keys in .env
 ```
 
-### Configure .env
+### Environment Variables
+
+```env
 GITHUB_TOKEN=ghp_your_token_here
 GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
 GROQ_API_KEY=gsk_your_groq_key_here
 DATABASE_URL=sqlite:///./reviews.db
 LOG_LEVEL=INFO
+```
 
-### Run the server
+### Run
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-Server starts at `http://localhost:8000`
+API available at `http://localhost:8000`  
+Interactive docs at `http://localhost:8000/docs`
 
-Interactive API docs at `http://localhost:8000/docs`
+---
+
+## Webhook Setup
+
+```bash
+# Expose local server to the internet
+ngrok http 8000
+```
+
+Then go to your GitHub repository → **Settings → Webhooks → Add webhook** and configure:
+
+| Field | Value |
+|---|---|
+| Payload URL | `https://your-ngrok-url/webhook/github` |
+| Content type | `application/json` |
+| Secret | Your `GITHUB_WEBHOOK_SECRET` value |
+| Events | Pull requests |
+
+Open a PR on the repository — the system reviews it automatically.
 
 ---
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | /health | Server health check |
-| GET | /metrics | AI quality metrics dashboard |
-| POST | /webhook/github | GitHub webhook receiver |
+|---|---|---|
+| GET | `/health` | Server health check |
+| GET | `/metrics` | AI quality metrics across all reviews |
+| POST | `/webhook/github` | GitHub webhook receiver |
 
-### Sample /metrics response
+### Sample `/metrics` Response
 
 ```json
 {
@@ -200,110 +254,36 @@ Interactive API docs at `http://localhost:8000/docs`
 
 ---
 
-## Evaluation Layer
-
-The evaluation layer automatically measures AI review quality
-without human involvement.
-
-### What we measure
-
-**Hallucination Rate**
-The AI sometimes comments on lines that do not exist in the diff.
-We detect this by checking every comment's line number against
-the actual diff length.
-Hallucination rate = hallucinated comments / total comments × 100
-
-**Coverage Rate**
-What percentage of changed files received at least one comment.
-Coverage rate = files with comments / total files changed × 100
-
-**Quality Score**
-A composite score from 0 to 100.
-Quality = 100
-- (hallucination rate × 0.5)
-+ (coverage rate × 0.1)
-clamped between 0 and 100
-
-### How to interpret the metrics
-
-| Quality Score | Meaning |
-|---|---|
-| 90 to 100 | Excellent — AI is accurate and thorough |
-| 70 to 90 | Good — minor hallucination or coverage gaps |
-| 50 to 70 | Fair — prompt tuning recommended |
-| Below 50 | Poor — significant hallucination problem |
-
----
-
-## Webhook Setup
-
-To connect GitHub to your server:
-
-1. Expose your local server using ngrok:
-```bash
-ngrok http 8000
-```
-
-2. Go to your GitHub repo → Settings → Webhooks → Add webhook
-
-3. Configure:
-   - Payload URL: `https://your-ngrok-url/webhook/github`
-   - Content type: `application/json`
-   - Secret: your `GITHUB_WEBHOOK_SECRET` value
-   - Events: Pull requests
-
-4. Open a PR on that repo — the system reviews it automatically
-
----
-
 ## Security
 
-- **HMAC-SHA256 verification** — every webhook request is verified
-  using a shared secret. Fake requests are rejected with 401.
-- **Timing-safe comparison** — `hmac.compare_digest()` prevents
-  timing attacks on signature verification.
-- **Secret management** — all API keys in `.env`, never committed.
-- **Non-root execution** — Docker container runs as limited user.
+- **HMAC-SHA256 verification** — every webhook request is signed by GitHub and verified server-side. Requests with invalid signatures are rejected with 401.
+- **Timing-safe comparison** — `hmac.compare_digest()` prevents timing attacks on signature verification.
+- **Secret management** — all API keys stored in `.env`, never committed to version control.
 
 ---
 
-## Future Improvements
+## Known Limitations and Planned Improvements
 
 **Short term**
-- Chunking for large PRs — split diffs into chunks, review in parallel
-- Idempotency check — skip re-reviewing same commit SHA twice
-- Exponential backoff — smarter retry with increasing delays
+- Chunking for large PRs — split diffs by file, review in parallel, aggregate results
+- Idempotency guard — skip re-reviewing the same commit SHA if already processed
+- Exponential backoff — replace fixed retry delay with increasing delays
 
 **Medium term**
-- PostgreSQL — swap DATABASE_URL for production scale
-- Celery + Redis — replace BackgroundTasks with proper job queue
-- Per-file review — review each file independently for better quality
+- PostgreSQL — swap `DATABASE_URL` for production-scale deployments
+- Celery + Redis — replace `BackgroundTasks` with a proper durable job queue
+- Checkpoint-based retries — resume pipeline from last successful stage instead of restarting
 
 **Long term**
-- RAG with vector DB — store past reviews as embeddings,
-  surface relevant history to improve future reviews
-- Per-author profiles — track developer patterns over time
-- Multi-model review — run two LLMs, merge results, reduce false positives
-- MCP compatibility — wrap agents as MCP tools for Claude integration
-
----
-
-## Agent Design Principles
-
-Each agent follows these rules:
-
-1. **Single responsibility** — one agent, one job
-2. **Independent** — agents do not know about each other
-3. **Fail loudly** — exceptions are logged and re-raised, never swallowed
-4. **Graceful degradation** — fallbacks ensure partial success over total failure
-5. **Stateless** — agents take input, return output, hold no state
+- RAG with vector DB — store past reviews as embeddings, surface relevant history to improve future reviews
+- Multi-model consensus — run two LLMs independently, merge results to reduce false positives
+- Per-author profiles — track developer patterns over time and personalise feedback
+- MCP compatibility — wrap agents as MCP tools for use with Claude
 
 ---
 
 ## Built by
 
-Vaishnav Bhosale
+**Vaishnav Bhosale**
 
-Built as a production-style AI engineering project demonstrating
-multi-agent orchestration, LLM integration, structured output parsing,
-and automated evaluation of AI quality.
+Built as a production-style AI engineering project demonstrating multi-agent orchestration, LLM integration, structured output parsing, and automated evaluation of AI review quality.
