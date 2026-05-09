@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from pydantic import BaseModel
+from typing import List
 
 
 @dataclass
@@ -20,3 +22,18 @@ class PRContext:
     base_branch: str
     head_branch: str
     files: list = field(default_factory=list)
+
+
+class ReviewComment(BaseModel):
+    filename: str
+    line: int
+    issue: str
+    suggestion: str
+    severity: str
+
+
+class ReviewResult(BaseModel):
+    overall_score: int
+    approved: bool
+    summary: str
+    comments: List[ReviewComment]
