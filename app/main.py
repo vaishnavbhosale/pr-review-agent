@@ -64,6 +64,21 @@ async def health_check():
         "service": "PR Review Agent",
         "version": "1.0.0"
     }
+@app.get("/metrics")
+async def get_metrics():
+    from app.db.database import SessionLocal
+    from app.db.crud import get_evaluation_report, get_stats
+
+    db = SessionLocal()
+    try:
+        report = get_evaluation_report(db)
+        stats = get_stats(db)
+        return {
+            "system_stats": stats,
+            "ai_quality": report
+        }
+    finally:
+        db.close()
 
 
 @app.post("/webhook/github", status_code=202)

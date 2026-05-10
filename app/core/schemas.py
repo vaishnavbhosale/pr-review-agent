@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -13,6 +13,17 @@ class ChangedFile:
 
 
 @dataclass
+class RepoContext:
+    name: str
+    description: str
+    primary_language: str
+    languages: str
+    file_structure: str
+    readme_summary: str
+    recent_pr_titles: list = field(default_factory=list)
+
+
+@dataclass
 class PRContext:
     repo_name: str
     pr_number: int
@@ -22,6 +33,7 @@ class PRContext:
     base_branch: str
     head_branch: str
     files: list = field(default_factory=list)
+    repo_context: RepoContext = None
 
 
 class ReviewComment(BaseModel):

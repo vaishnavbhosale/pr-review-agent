@@ -1,79 +1,113 @@
 SYSTEM_PROMPT = """
 You are an expert software engineer performing a code review.
-You have deep knowledge of security vulnerabilities, performance optimization, clean code principles, and software design patterns.
+You have deep knowledge of security vulnerabilities, performance 
+optimization, clean code principles, and software design patterns.
 
-Your job is to review the provided pull request diff and return a structured JSON review.
+You will be given:
+1. Context about the repository — what it does, its tech stack, 
+   file structure, and recent merged PRs
+2. The pull request diff — what changed in this PR
 
-You must follow these rules strictly:
+Use the repository context to give REPO-AWARE feedback.
+This means:
+- Understand the project's purpose before reviewing
+- Consider the tech stack when flagging issues
+- Follow patterns consistent with this codebase
+- Reference the existing structure when suggesting improvements
 
-1. Only comment on lines that actually exist in the diff.
-2. Every comment must be specific and actionable. Do not write vague feedback.
-3. Classify every issue by severity:
-   - critical: security vulnerabilities, data loss risks, crashes
-   - warning: bugs, bad practices, logic errors
-   - suggestion: improvements, readability, performance
-
-4. Your response must be a valid JSON object. No extra text before or after the JSON.
-5. Use exactly this JSON structure:
+Your response must be a valid JSON object. No extra text before 
+or after the JSON. Use exactly this structure:
 
 {
     "overall_score": <integer between 1 and 10>,
-    "approved": <true if score is 7 or above and no critical issues, otherwise false>,
-    "summary": "<2 to 3 sentences describing the overall quality of this PR>",
+    "approved": <true if score >= 7 and no critical issues>,
+    "summary": "<2-3 sentences about the PR in context of this repo>",
     "comments": [
         {
             "filename": "<exact filename from the diff>",
             "line": <line number as integer>,
-            "issue": "<clear description of the problem>",
-            "suggestion": "<specific actionable fix>",
-            "severity": "<critical or warning or suggestion>"
+            "issue": "<specific issue referencing repo context where relevant>",
+            "suggestion": "<actionable fix consistent with this codebase>",
+            "severity": "<critical|warning|suggestion>"
         }
     ]
 }
 
-If there are no issues found, return an empty comments array.
-Do not invent issues that are not present in the code.
+Rules:
+- Only comment on lines that exist in the diff
+- critical = security risks, data loss, crashes
+- warning = bugs, bad patterns, logic errors
+- suggestion = improvements, readability, performance
+- Reference the repo context in your summary
+- If the code follows existing repo patterns, acknowledge it
+- Return ONLY the JSON. No markdown, no explanation.
 """
 
 
 def build_user_prompt(context) -> str:
     """
     Builds the user prompt from a PRContext object.
-    This is what changes with every PR.
+    Now includes full repository context so the AI
+    reviews with knowledge of the entire codebase.
     """
 
-    # Start with PR metadata
-    prompt = f"""
-Pull Request #{context.pr_number}
-Repository: {context.repo_name}
-Title: {context.title}
-Description: {context.description}
-Author: {context.author}
-Base Branch: {context.base_branch}
-Head Branch: {context.head_branch}
-Total Files Changed: {len(context.files)}
+    prompt = ""
 
-"""
+    # ── Section 1: Repository Context ──────────────────────────
+    if context.repo_context:
+        rc = context.repo_context
+        prompt += "=" * 60 + "\n"
+        prompt += "REPOSITORY CONTEXT\n"
+        prompt += "=" * 60 + "\n"
+        prompt += f"Repository     : {rc.name}\n"
+        prompt += f"Description    : {rc.description}\n"
+        prompt += f"Primary Lang   : {rc.primary_language}\n"
+        prompt += f"All Languages  : {rc.languages}\n"
+        prompt += "\n"
 
-    # Add each file's diff
+        prompt += "File Structure:\n"
+        prompt += rc.file_structure + "\n\n"
+
+        if rc.recent_pr_titles:
+            prompt += "Recent Merged PRs (what this team ships):\n"
+            for title in rc.recent_pr_titles:
+                prompt += title + "\n"
+            prompt += "\n"
+
+        prompt += "README Summary:\n"
+        prompt += rc.readme_summary + "\n\n"
+
+    # ── Section 2: Pull Request Details ────────────────────────
+    prompt += "=" * 60 + "\n"
+    prompt += "PULL REQUEST\n"
+    prompt += "=" * 60 + "\n"
+    prompt += f"PR Number  : #{context.pr_number}\n"
+    prompt += f"Title      : {context.title}\n"
+    prompt += f"Author     : {context.author}\n"
+    prompt += f"Description: {context.description}\n"
+    prompt += f"Base Branch: {context.base_branch}\n"
+    prompt += f"Head Branch: {context.head_branch}\n"
+    prompt += f"Files Changed: {len(context.files)}\n\n"
+
+    # ── Section 3: Changed Files and Diffs ─────────────────────
+    prompt += "=" * 60 + "\n"
+    prompt += "CODE CHANGES\n"
+    prompt += "=" * 60 + "\n"
+
+    skip_patterns = [
+        "package-lock.json",
+        "yarn.lock",
+        "poetry.lock",
+        ".min.js",
+        ".min.css",
+        "requirements.txt",
+        "Pipfile.lock",
+    ]
+
     for changed_file in context.files:
 
-        # Skip files with no patch content
-        # Binary files, deleted empty files have no diff to review
         if not changed_file.patch:
             continue
-
-        # Skip auto-generated files and dependency files
-        # These are not written by the developer and not worth reviewing
-        skip_patterns = [
-            "package-lock.json",
-            "yarn.lock",
-            "poetry.lock",
-            ".min.js",
-            ".min.css",
-            "requirements.txt",
-            "Pipfile.lock",
-        ]
 
         should_skip = any(
             pattern in changed_file.filename
@@ -83,25 +117,27 @@ Total Files Changed: {len(context.files)}
         if should_skip:
             continue
 
-        prompt += f"File: {changed_file.filename}\n"
-        prompt += f"Status: {changed_file.status}\n"
-        prompt += f"Additions: {changed_file.additions} | Deletions: {changed_file.deletions}\n"
+        prompt += f"\nFile   : {changed_file.filename}\n"
+        prompt += f"Status : {changed_file.status}\n"
+        prompt += f"Changes: +{changed_file.additions} additions, "
+        prompt += f"-{changed_file.deletions} deletions\n"
         prompt += "Diff:\n"
 
-        # Token optimization — truncate very large diffs
-        # A single file with 500+ changed lines is too large
-        # We take the first 300 lines and tell the AI the rest was cut
         diff_lines = changed_file.patch.split("\n")
 
         if len(diff_lines) > 300:
             truncated = "\n".join(diff_lines[:300])
             prompt += truncated
-            prompt += f"\n... [diff truncated — {len(diff_lines) - 300} lines not shown] ...\n"
+            prompt += (
+                f"\n... [diff truncated — "
+                f"{len(diff_lines) - 300} lines not shown] ...\n"
+            )
         else:
             prompt += changed_file.patch
 
-        prompt += "\n\n"
+        prompt += "\n"
 
-    prompt += "Provide your structured JSON review now:"
+    prompt += "\n" + "=" * 60 + "\n"
+    prompt += "Provide your repo-aware structured JSON review now:\n"
 
     return prompt
