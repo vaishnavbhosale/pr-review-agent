@@ -1,14 +1,6 @@
-Here is the complete final README. Copy everything below this line:
-
----
-
-```markdown
 # PR Review Agent
 
-A production-style multi-agent system that automatically reviews GitHub Pull Requests using AI. 
-When a developer opens a PR, the system fetches the diff along with full repository context, 
-sends it to Llama 3.3-70b via Groq, evaluates the review quality, and posts structured feedback back to GitHub —
- all without human involvement.
+A production-style multi-agent system that automatically reviews GitHub Pull Requests using AI. When a developer opens a PR, the system fetches the diff along with full repository context, sends it to Llama 3.3-70b via Groq, evaluates the review quality, and posts structured feedback back to GitHub — all without human involvement.
 
 Built with FastAPI, Groq, SQLAlchemy, and PyGithub.
 
@@ -179,28 +171,23 @@ pr-review-agent/
 ### Prerequisites
 
 - Python 3.11+
-- Groq API key — [console.groq.com](https://console.groq.com)
+- Groq API key — https://console.groq.com
 - GitHub Personal Access Token with `repo` scope
 - A GitHub repository with webhook access
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/vaishnavbhosale/pr-review-agent
 cd pr-review-agent
 
-# Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate        # Mac / Linux
 venv\Scripts\activate           # Windows
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
 cp .env.example .env
-# Fill in your API keys in .env
 ```
 
 ### Environment Variables
@@ -227,16 +214,17 @@ python run.py
 
 Update `REPO` and `PR_NUMBER` at the top of `run.py` to target any PR.
 
-### Option 2 — Webhook server (automatic)
+### Option 2 — Webhook server
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
 API available at `http://localhost:8000`
+
 Interactive docs at `http://localhost:8000/docs`
 
-Once the server is running, expose it to the internet using ngrok:
+Expose to the internet for automatic webhook triggering:
 
 ```bash
 ngrok http 8000
@@ -246,13 +234,13 @@ ngrok http 8000
 
 ## Webhook Setup
 
-Go to your GitHub repository → **Settings → Webhooks → Add webhook** and configure:
+Go to your GitHub repository → Settings → Webhooks → Add webhook
 
 | Field | Value |
 |---|---|
-| Payload URL | `https://your-ngrok-url/webhook/github` |
-| Content type | `application/json` |
-| Secret | Your `GITHUB_WEBHOOK_SECRET` value |
+| Payload URL | https://your-ngrok-url/webhook/github |
+| Content type | application/json |
+| Secret | Your GITHUB_WEBHOOK_SECRET value |
 | Events | Pull requests |
 
 Open a PR on the repository — the system reviews it automatically.
@@ -263,11 +251,11 @@ Open a PR on the repository — the system reviews it automatically.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/health` | Server health check |
-| GET | `/metrics` | AI quality metrics across all reviews |
-| POST | `/webhook/github` | GitHub webhook receiver |
+| GET | /health | Server health check |
+| GET | /metrics | AI quality metrics across all reviews |
+| POST | /webhook/github | GitHub webhook receiver |
 
-### Sample `/metrics` Response
+### Sample /metrics Response
 
 ```json
 {
@@ -308,8 +296,8 @@ Open a PR on the repository — the system reviews it automatically.
 - Exponential backoff — replace fixed retry delay with increasing delays
 
 **Medium term**
-- PostgreSQL — swap `DATABASE_URL` for production-scale deployments
-- Celery + Redis — replace `BackgroundTasks` with a proper durable job queue
+- PostgreSQL — swap DATABASE_URL for production-scale deployments
+- Celery + Redis — replace BackgroundTasks with a proper durable job queue
 - Checkpoint-based retries — resume pipeline from last successful stage instead of restarting
 
 **Long term**
@@ -322,8 +310,6 @@ Open a PR on the repository — the system reviews it automatically.
 
 ## Built by
 
-**Vaishnavv 🩵**
+**Vaishnavv🩵**
 
 Built as a production-style AI engineering project demonstrating multi-agent orchestration, repo-aware LLM integration, structured output parsing, and automated evaluation of AI review quality.
-
-
