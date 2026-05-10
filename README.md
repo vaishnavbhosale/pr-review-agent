@@ -1,6 +1,14 @@
+Here is the complete final README. Copy everything below this line:
+
+---
+
+```markdown
 # PR Review Agent
 
-A production-style multi-agent system that automatically reviews GitHub Pull Requests using AI. When a developer opens a PR, the system fetches the diff, sends it to Llama 3.3-70b via Groq, evaluates the review quality, and posts structured feedback back to GitHub — all without human involvement.
+A production-style multi-agent system that automatically reviews GitHub Pull Requests using AI. 
+When a developer opens a PR, the system fetches the diff along with full repository context, 
+sends it to Llama 3.3-70b via Groq, evaluates the review quality, and posts structured feedback back to GitHub —
+ all without human involvement.
 
 Built with FastAPI, Groq, SQLAlchemy, and PyGithub.
 
@@ -18,7 +26,7 @@ POST /webhook/github          ← FastAPI verifies HMAC-SHA256 signature
    Orchestrator                ← Background task, retries on failure
         │
         ├── Stage 1: FetcherAgent
-        │         GitHub API → PR metadata + file diffs → PRContext
+        │         GitHub API → PR metadata + file diffs + repo context → PRContext
         │
         ├── Stage 2: ReviewerAgent
         │         PRContext → Groq (Llama 3.3-70b) → ReviewResult
@@ -41,6 +49,7 @@ The developer sees a structured review with an overall score (1–10), inline co
 
 - **HMAC-SHA256 webhook verification** — rejects fake requests at the door
 - **Async pipeline** — returns 202 to GitHub immediately, reviews in background
+- **Repo-aware reviews** — fetches README, file structure, languages, and recent merged PRs to give the AI full repository context before reviewing
 - **Structured JSON output** — AI response is parsed and validated against Pydantic schemas
 - **Evaluation layer** — measures hallucination rate, coverage rate, and quality score on every review
 - **Graceful degradation** — if inline comments fail, falls back to posting the summary only
@@ -56,8 +65,8 @@ Each agent has one responsibility and no knowledge of the others. They are indep
 
 | Agent | Responsibility |
 |---|---|
-| FetcherAgent | Calls GitHub API, builds PRContext with files and metadata |
-| ReviewerAgent | Builds prompt, calls Groq, parses JSON response into ReviewResult |
+| FetcherAgent | Calls GitHub API, builds PRContext with files, metadata, and full repository context — README, file structure, languages, recent merged PRs |
+| ReviewerAgent | Builds prompt with repo context, calls Groq, parses JSON response into ReviewResult |
 | EvaluatorAgent | Validates comments against actual diff, computes quality metrics |
 | PosterAgent | Formats ReviewResult as Markdown, posts to GitHub PR |
 
@@ -66,6 +75,19 @@ Each agent has one responsibility and no knowledge of the others. They are indep
 - Fail loudly — exceptions are logged and re-raised, never swallowed silently
 - Graceful degradation — fallbacks ensure partial success over total failure
 - Stateless — agents take input, return output, hold no internal state
+
+---
+
+## Repo-Aware Context
+
+Before reviewing any PR, the FetcherAgent gathers full context about the repository:
+
+- **README** — what the project does and how it is structured
+- **File structure** — top level directories and files
+- **Languages** — all programming languages used in the codebase
+- **Recent merged PRs** — what kind of work this team ships
+
+This context is passed to the ReviewerAgent so the AI understands the codebase before reading the diff. Reviews reference the specific repository, its tech stack, and its patterns — not just the isolated code change.
 
 ---
 
@@ -129,7 +151,7 @@ pr-review-agent/
 │   ├── main.py                 # FastAPI app, webhook endpoint
 │   ├── config.py               # Settings loaded from .env
 │   ├── agents/
-│   │   ├── fetcher.py          # Agent 1: fetch PR from GitHub API
+│   │   ├── fetcher.py          # Agent 1: fetch PR and repo context from GitHub API
 │   │   ├── reviewer.py         # Agent 2: review with Groq LLM
 │   │   └── poster.py           # Agent 4: post review to GitHub PR
 │   ├── core/
@@ -139,11 +161,12 @@ pr-review-agent/
 │   │   └── schemas.py          # Pydantic models and dataclasses
 │   └── db/
 │       ├── database.py         # SQLAlchemy engine and session factory
-│       ├── models.py           # ORM models — PRReview, ReviewComment
+│       ├── models.py           # ORM models — PRReview, ReviewComment, EvaluationMetrics
 │       └── crud.py             # Database read/write operations
 ├── tests/
 │   ├── test_webhook.py         # Webhook verification and routing tests
 │   └── test_agents.py          # Agent unit tests with mocked APIs
+├── run.py                      # Manual pipeline runner — test any PR instantly
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -190,25 +213,40 @@ DATABASE_URL=sqlite:///./reviews.db
 LOG_LEVEL=INFO
 ```
 
-### Run
+---
+
+## Running the System
+
+### Option 1 — Manual testing
+
+Test the full pipeline on any PR instantly:
+
+```bash
+python run.py
+```
+
+Update `REPO` and `PR_NUMBER` at the top of `run.py` to target any PR.
+
+### Option 2 — Webhook server (automatic)
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-API available at `http://localhost:8000`  
+API available at `http://localhost:8000`
 Interactive docs at `http://localhost:8000/docs`
+
+Once the server is running, expose it to the internet using ngrok:
+
+```bash
+ngrok http 8000
+```
 
 ---
 
 ## Webhook Setup
 
-```bash
-# Expose local server to the internet
-ngrok http 8000
-```
-
-Then go to your GitHub repository → **Settings → Webhooks → Add webhook** and configure:
+Go to your GitHub repository → **Settings → Webhooks → Add webhook** and configure:
 
 | Field | Value |
 |---|---|
@@ -278,12 +316,14 @@ Open a PR on the repository — the system reviews it automatically.
 - RAG with vector DB — store past reviews as embeddings, surface relevant history to improve future reviews
 - Multi-model consensus — run two LLMs independently, merge results to reduce false positives
 - Per-author profiles — track developer patterns over time and personalise feedback
-- MCP compatibility — wrap agents as MCP tools for use with Claude
+- MCP compatibility — wrap agents as MCP tools for use with Claude and other MCP-compatible hosts
 
 ---
 
 ## Built by
 
-**Vaishnav Bhosale**
+**Vaishnavv 🩵**
 
-Built as a production-style AI engineering project demonstrating multi-agent orchestration, LLM integration, structured output parsing, and automated evaluation of AI review quality.
+Built as a production-style AI engineering project demonstrating multi-agent orchestration, repo-aware LLM integration, structured output parsing, and automated evaluation of AI review quality.
+
+
