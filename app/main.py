@@ -52,6 +52,31 @@ def verify_github_signature(payload: bytes, signature: str) -> bool:
 
     return hmac.compare_digest(expected_signature, signature)
 
+@app.post("/ingest/{repo_owner}/{repo_name}")
+async def ingest_repo(repo_owner: str, repo_name: str, background_tasks: BackgroundTasks):
+    """
+    Triggers codebase ingestion for a repository.
+    Call this once per repo before reviews start.
+    Also call when main branch is updated.
+    """
+    from app.rag.ingestor import CodebaseIngestor
+
+    full_repo_name = f"{repo_owner}/{repo_name}"
+    logger.info(f"[API] Ingestion requested for {full_repo_name}")
+
+    def run_ingestion():
+        ingestor = CodebaseIngestor()
+        result = ingestor.ingest_repo(full_repo_name)
+        logger.info(f"[API] Ingestion complete: {result}")
+
+    background_tasks.add_task(run_ingestion)
+
+    return {
+        "status": "ingestion_started",
+        "repo": full_repo_name,
+        "message": "Codebase is being indexed. Reviews will use RAG context once complete."
+    }
+
 
 @app.get("/health")
 async def health_check():

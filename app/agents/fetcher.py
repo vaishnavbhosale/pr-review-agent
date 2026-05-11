@@ -26,7 +26,6 @@ class FetcherAgent:
             logger.error(f"[FetcherAgent] Could not find PR #{pr_number}. Error: {e}")
             raise
 
-        # Fetch changed files
         changed_files = []
         for github_file in pr.get_files():
             changed_files.append(ChangedFile(
@@ -37,7 +36,6 @@ class FetcherAgent:
                 patch=github_file.patch if github_file.patch else "",
             ))
 
-        # Fetch repo context
         repo_context = self._fetch_repo_context(repo)
 
         context = PRContext(
@@ -52,36 +50,39 @@ class FetcherAgent:
             repo_context=repo_context,
         )
 
+        try:
+            from app.rag.retriever import CodebaseRetriever
+            retriever = CodebaseRetriever()
+            rag_context = retriever.retrieve_context(context)
+            if rag_context:
+                context.rag_context = rag_context
+                logger.info(f"[FetcherAgent] RAG context retrieved successfully")
+            else:
+                logger.info(f"[FetcherAgent] No RAG index found, skipping")
+        except Exception as e:
+            logger.warning(f"[FetcherAgent] RAG retrieval failed: {e}")
+
         logger.info(
             f"[FetcherAgent] Done. "
             f"Files: {len(changed_files)} | "
-            f"Repo context fetched: True"
+            f"Repo context fetched: True | "
+            f"RAG context: {bool(context.rag_context)}"
         )
 
         return context
 
     def _fetch_repo_context(self, repo) -> RepoContext:
-        """
-        Fetches contextual information about the repository.
-        This gives the AI reviewer knowledge about the codebase
-        beyond just the PR diff — what the project does, what
-        languages it uses, what the file structure looks like,
-        and what kind of PRs this team typically merges.
-        """
         logger.info(f"[FetcherAgent] Fetching repo context for {repo.full_name}")
 
-        # 1 — Basic repo info
         description = repo.description or "No description provided"
         primary_language = repo.language or "Unknown"
 
-        # 2 — All languages used in the repo
         try:
             languages_dict = repo.get_languages()
             languages = ", ".join(languages_dict.keys())
         except Exception:
             languages = primary_language
 
-        # 3 — Top level file structure
         try:
             contents = repo.get_contents("")
             file_structure = "\n".join([
@@ -91,7 +92,6 @@ class FetcherAgent:
         except Exception:
             file_structure = "Could not fetch file structure"
 
-        # 4 — README content (first 1500 chars)
         try:
             readme = repo.get_readme()
             readme_content = readme.decoded_content.decode("utf-8")
@@ -101,7 +101,6 @@ class FetcherAgent:
         except Exception:
             readme_summary = "No README available"
 
-        # 5 — Recent merged PR titles (last 5)
         try:
             merged_prs = repo.get_pulls(
                 state="closed",

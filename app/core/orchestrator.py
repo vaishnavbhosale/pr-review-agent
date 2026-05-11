@@ -6,6 +6,7 @@ from app.agents.poster import PosterAgent
 from app.core.evaluator import EvaluatorAgent
 from app.db.database import SessionLocal
 from app.db.crud import save_review, save_evaluation_metrics
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,16 +15,6 @@ RETRY_DELAY = 5
 
 
 async def run_pipeline(repo_name: str, pr_number: int):
-    """
-    The main pipeline. Runs all agents in sequence.
-
-    Fetcher → Reviewer → Evaluator → Poster → Database
-
-    Evaluator runs before Poster so we have quality metrics
-    before deciding how to present the review.
-
-    Retries up to MAX_RETRIES times on failure.
-    """
 
     logger.info(
         f"[Orchestrator] Pipeline started — "
@@ -32,10 +23,7 @@ async def run_pipeline(repo_name: str, pr_number: int):
 
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            logger.info(
-                f"[Orchestrator] Attempt {attempt} "
-                f"of {MAX_RETRIES + 1}"
-            )
+            logger.info(f"[Orchestrator] Attempt {attempt} of {MAX_RETRIES + 1}")
 
             # ── Stage 1: Fetch ──────────────────────────────
             logger.info("[Orchestrator] Stage 1 — Fetching PR data")
@@ -53,10 +41,15 @@ async def run_pipeline(repo_name: str, pr_number: int):
             # ── Stage 2: Review ─────────────────────────────
             logger.info("[Orchestrator] Stage 2 — Reviewing code with AI")
 
-            reviewer = ReviewerAgent()
-            result = await asyncio.to_thread(
-                reviewer.run, context
-            )
+            if getattr(settings, 'AGENTIC_MODE', False):
+                from app.agents.agentic_reviewer import AgenticReviewerAgent
+                reviewer = AgenticReviewerAgent()
+                logger.info("[Orchestrator] Using AgenticReviewerAgent")
+            else:
+                reviewer = ReviewerAgent()
+                logger.info("[Orchestrator] Using standard ReviewerAgent")
+
+            result = await asyncio.to_thread(reviewer.run, context)
 
             logger.info(
                 f"[Orchestrator] Stage 2 complete — "
@@ -97,7 +90,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
 
             db = SessionLocal()
             try:
-                # Save review with comment evaluations
                 saved = await asyncio.to_thread(
                     save_review,
                     db,
@@ -107,7 +99,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
                     comment_evaluations
                 )
 
-                # Save evaluation metrics separately
                 await asyncio.to_thread(
                     save_evaluation_metrics,
                     db,
@@ -122,9 +113,8 @@ async def run_pipeline(repo_name: str, pr_number: int):
             finally:
                 db.close()
 
-            # ── Pipeline complete ───────────────────────────
             logger.info(
-                f"[Orchestrator] Pipeline finished successfully — "
+                f"[Orchestrator] Pipeline finished — "
                 f"PR #{pr_number} | "
                 f"Score: {result.overall_score}/10 | "
                 f"Approved: {result.approved} | "
@@ -142,8 +132,7 @@ async def run_pipeline(repo_name: str, pr_number: int):
 
             if attempt <= MAX_RETRIES:
                 logger.info(
-                    f"[Orchestrator] Waiting {RETRY_DELAY}s "
-                    f"before retry..."
+                    f"[Orchestrator] Waiting {RETRY_DELAY}s before retry..."
                 )
                 await asyncio.sleep(RETRY_DELAY)
             else:

@@ -137,6 +137,14 @@ def build_user_prompt(context) -> str:
 
         prompt += "\n"
 
+    # ── Section 4: RAG Retrieved Context ───────────────────────
+    if hasattr(context, 'rag_context') and context.rag_context:
+        prompt += "=" * 60 + "\n"
+        prompt += "SEMANTICALLY RELATED CODE FROM THE CODEBASE\n"
+        prompt += "(Retrieved based on similarity to this PR's changes)\n"
+        prompt += "=" * 60 + "\n"
+        prompt += context.rag_context + "\n\n"
+
     prompt += "\n" + "=" * 60 + "\n"
     prompt += "Provide your repo-aware structured JSON review now:\n"
 

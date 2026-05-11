@@ -32,6 +32,7 @@ class PRContext:
     author: str
     base_branch: str
     head_branch: str
+    rag_context: str = ""
     files: list = field(default_factory=list)
     repo_context: RepoContext = None
 
