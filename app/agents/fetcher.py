@@ -48,19 +48,52 @@ class FetcherAgent:
             head_branch=pr.head.ref,
             files=changed_files,
             repo_context=repo_context,
+            rag_context=None,  # FIX: explicitly initialise before RAG block
         )
 
         try:
             from app.rag.retriever import CodebaseRetriever
+            from app.rag.ingestor import CodebaseIngestor
+
             retriever = CodebaseRetriever()
+            collection = retriever.get_collection(context.repo_name)
+
+            if collection is None or collection.count() == 0:
+                logger.info(
+                    f"[FetcherAgent] No RAG index found for {repo_name}. "
+                    f"Running auto-ingestion..."
+                )
+                ingestor = CodebaseIngestor()
+                ingestor.ingest_repo(repo_name)
+                logger.info(f"[FetcherAgent] Auto-ingestion complete")
+
+                # FIX: Re-fetch the collection after ingestion so retrieval
+                # actually uses the newly built index, not the empty one.
+                collection = retriever.get_collection(context.repo_name)
+
+                if collection is None or collection.count() == 0:
+                    logger.warning(
+                        f"[FetcherAgent] Collection still empty after ingestion "
+                        f"— RAG will be skipped for this review"
+                    )
+
             rag_context = retriever.retrieve_context(context)
+
             if rag_context:
                 context.rag_context = rag_context
                 logger.info(f"[FetcherAgent] RAG context retrieved successfully")
             else:
-                logger.info(f"[FetcherAgent] No RAG index found, skipping")
+                # FIX: Set explicitly to None and log a warning so downstream
+                # agents know to expect a diff-only review.
+                context.rag_context = None
+                logger.warning(
+                    f"[FetcherAgent] RAG retrieval returned empty "
+                    f"— review will be based on diff only"
+                )
+
         except Exception as e:
-            logger.warning(f"[FetcherAgent] RAG retrieval failed: {e}")
+            logger.warning(f"[FetcherAgent] RAG failed: {e}")
+            context.rag_context = None  # FIX: guarantee field is always set
 
         logger.info(
             f"[FetcherAgent] Done. "

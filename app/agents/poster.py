@@ -32,19 +32,36 @@ class PosterAgent:
             logger.error(f"[PosterAgent] Could not access PR: {e}")
             return False
 
+        # FIX: Detect self-PR before choosing event type
+        # GitHub API returns 422 if you try to APPROVE or REQUEST_CHANGES
+        # on a PR you authored yourself. We detect this early and switch
+        # to COMMENT to avoid the error entirely.
+        try:
+            bot_user = self.client.get_user().login
+        except GithubException as e:
+            logger.warning(f"[PosterAgent] Could not fetch bot username: {e}. Defaulting to COMMENT.")
+            bot_user = None
+
+        is_self_pr = bot_user is not None and context.author == bot_user
+
+        if is_self_pr:
+            logger.warning(
+                f"[PosterAgent] PR author '{context.author}' matches bot user '{bot_user}' "
+                f"— switching event to COMMENT to avoid GitHub 422"
+            )
+            review_event = "COMMENT"
+        elif result.approved:
+            review_event = "APPROVE"
+        else:
+            review_event = "REQUEST_CHANGES"
+
         # Step 1 — Build the main summary comment body
         summary_body = self._build_summary(context, result)
 
         # Step 2 — Build inline comments list
         inline_comments = self._build_inline_comments(result)
 
-        # Step 3 — Decide review verdict
-        if result.approved:
-            review_event = "APPROVE"
-        else:
-            review_event = "REQUEST_CHANGES"
-
-        # Step 4 — Submit everything in one API call
+        # Step 3 — Submit everything in one API call
         try:
             pr.create_review(
                 body=summary_body,
@@ -61,9 +78,9 @@ class PosterAgent:
             logger.error(f"[PosterAgent] Failed to post full review: {e}")
             logger.info(f"[PosterAgent] Attempting fallback — posting summary only")
 
-            # Fallback — if inline comments fail, post just the summary
+            # Fallback — if inline comments fail, post just the summary.
             # This happens when line numbers from the AI do not match
-            # the actual diff positions GitHub expects
+            # the actual diff positions GitHub expects.
             try:
                 pr.create_issue_comment(summary_body)
                 logger.info(f"[PosterAgent] Fallback summary posted successfully")

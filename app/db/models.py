@@ -6,7 +6,8 @@ from sqlalchemy import (
     Text,
     DateTime,
     Float,
-    ForeignKey
+    ForeignKey,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -15,17 +16,32 @@ from app.db.database import Base
 
 class PRReview(Base):
     """
-    Stores one row for every PR that was reviewed.
+    Stores one row for every PR review run.
     One PRReview has many ReviewComments.
+
+    Note: (repo_name, pr_number) is NOT unique intentionally —
+    the same PR can be reviewed multiple times (e.g. after new commits).
+    If you want only one review per PR, add the UniqueConstraint below.
     """
 
     __tablename__ = "pr_reviews"
 
+    # FIX: Uncomment this if you want to enforce one review per PR.
+    # Leave commented if multiple review runs per PR are expected.
+    # __table_args__ = (
+    #     UniqueConstraint("repo_name", "pr_number", name="uq_repo_pr"),
+    # )
+
     id = Column(Integer, primary_key=True, index=True)
     repo_name = Column(String(255), nullable=False)
     pr_number = Column(Integer, nullable=False)
-    pr_title = Column(String(500), nullable=True)
-    author = Column(String(100), nullable=True)
+
+    # FIX: Changed nullable=True → nullable=False.
+    # The fetcher always provides these from the GitHub API.
+    # If they're missing it means something upstream broke — fail loudly.
+    pr_title = Column(String(500), nullable=False)
+    author = Column(String(100), nullable=False)
+
     overall_score = Column(Integer, nullable=True)
     approved = Column(Boolean, nullable=True)
     summary = Column(Text, nullable=True)

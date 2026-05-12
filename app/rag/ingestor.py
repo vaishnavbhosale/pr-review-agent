@@ -4,9 +4,11 @@ import logging
 import hashlib
 from pathlib import Path
 from github import Github
-from sentence_transformers import SentenceTransformer
 import chromadb
 from app.config import settings
+
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,8 @@ class CodebaseIngestor:
 
     def __init__(self):
         self.github_client = Github(settings.GITHUB_TOKEN)
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # Pass API key explicitly so auth failures surface immediately.
+        self.gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.chroma_client = chromadb.PersistentClient(path="./codebase_index")
 
     def get_or_create_collection(self, repo_name: str):
@@ -63,7 +66,6 @@ class CodebaseIngestor:
         repo = self.github_client.get_repo(repo_name)
         collection = self.get_or_create_collection(repo_name)
 
-        # Get all files recursively
         all_files = self._get_all_files(repo, branch)
         logger.info(f"[Ingestor] Found {len(all_files)} indexable files")
 
@@ -96,7 +98,6 @@ class CodebaseIngestor:
             try:
                 contents = repo.get_contents(path, ref=branch)
                 for item in contents:
-                    # Skip unwanted patterns
                     if any(skip in item.path for skip in SKIP_PATTERNS):
                         continue
 
@@ -109,7 +110,6 @@ class CodebaseIngestor:
                                 content = item.decoded_content.decode(
                                     "utf-8", errors="ignore"
                                 )
-                                # Skip very large files
                                 if len(content) < 100000:
                                     files[item.path] = content
                             except Exception as e:
@@ -127,9 +127,6 @@ class CodebaseIngestor:
         Splits a file into meaningful chunks.
 
         For Python files: uses AST to split by function and class.
-        This ensures we never cut a function in half — the AI
-        always sees complete, runnable code units.
-
         For other files: falls back to line-based chunking with overlap.
         """
         if filepath.endswith(".py"):
@@ -147,19 +144,27 @@ class CodebaseIngestor:
         of a 20-line function. The AI then sees broken, unrunnable code.
         AST splitting gives the AI complete, syntactically valid units.
         """
+        # FIX 1: Correct indentation throughout this method (was broken in previous version)
         chunks = []
 
         try:
             tree = ast.parse(content)
             lines = content.split("\n")
+            seen_ranges = set()  # FIX 2: track ranges to avoid duplicate chunks
 
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    # Get start and end line numbers
                     start_line = node.lineno - 1
                     end_line = node.end_lineno
+                    range_key = (start_line, end_line)
 
-                    # Extract the complete function or class
+                    # Skip if we already captured this exact range.
+                    # ast.walk visits both a ClassDef and its nested methods,
+                    # which can produce overlapping ranges for tiny files.
+                    if range_key in seen_ranges:
+                        continue
+                    seen_ranges.add(range_key)
+
                     chunk_lines = lines[start_line:end_line]
                     chunk_text = "\n".join(chunk_lines)
 
@@ -181,8 +186,10 @@ class CodebaseIngestor:
             logger.warning(f"[Ingestor] AST parse failed for {filepath}, using line chunking")
             return self._chunk_by_lines(filepath, content)
 
-        # Also add the full file as one chunk for file-level context
-        if len(content) < 5000:
+        # FIX 3: Only add full-file chunk when NO AST chunks were found.
+        # Previously this always ran for small files, producing a chunk with
+        # identical text to the only AST chunk → same MD5 → ChromaDB duplicate ID crash.
+        if not chunks and len(content) < 5000:
             chunks.append({
                 "text": content,
                 "filepath": filepath,
@@ -223,41 +230,120 @@ class CodebaseIngestor:
 
         return chunks
 
-    def _store_chunks(
-        self,
-        collection,
-        repo_name: str,
-        filepath: str,
-        chunks: list
-    ):
+    def _store_chunks(self, collection, repo_name: str, filepath: str, chunks: list):
         """
         Embeds and stores chunks in ChromaDB.
-        Uses upsert so re-ingesting the same file never creates duplicates.
         """
         texts = [c["text"] for c in chunks]
-        embeddings = self.embedding_model.encode(texts).tolist()
+
+        embeddings = self._get_embeddings_safe(texts)
+
+        if not embeddings:
+            logger.error(
+                f"[Ingestor] No embeddings returned for {filepath} — skipping"
+            )
+            return
+
+        if len(embeddings) != len(texts):
+            logger.error(
+                f"[Ingestor] Mismatch after retries: got {len(embeddings)} "
+                f"embeddings for {len(texts)} texts in {filepath} — skipping"
+            )
+            return
 
         ids = []
         metadatas = []
 
         for chunk in chunks:
-            # Create a stable unique ID from repo + filepath + position
-            chunk_id = hashlib.md5(
-                f"{repo_name}:{chunk['filepath']}:{chunk['start_line']}".encode()
-            ).hexdigest()
+            # FIX 4: Include type and name in the hash string so two chunks
+            # that share the same start_line (e.g. a function chunk and a
+            # module chunk covering the same lines) always produce different
+            # IDs and never collide in ChromaDB upsert.
+            unique_str = (
+                f"{repo_name}:{chunk['filepath']}:"
+                f"{chunk['start_line']}:{chunk['type']}:{chunk['name']}"
+            )
+            chunk_id = hashlib.md5(unique_str.encode()).hexdigest()
             ids.append(chunk_id)
+
             metadatas.append({
                 "filepath": chunk["filepath"],
                 "start_line": chunk["start_line"],
                 "end_line": chunk["end_line"],
                 "type": chunk["type"],
                 "name": chunk["name"],
-                "repo": repo_name
+                "repo": repo_name,
             })
 
         collection.upsert(
             documents=texts,
             embeddings=embeddings,
             ids=ids,
-            metadatas=metadatas
+            metadatas=metadatas,
         )
+
+        logger.info(
+            f"[Ingestor] Stored {len(chunks)} chunks for {filepath}"
+        )
+
+    def _get_embeddings_safe(self, texts: list[str]) -> list:
+        """
+        Calls the Gemini batch embed API with retry on count mismatch,
+        then falls back to one-by-one embedding if retries are exhausted.
+
+        Returns a list of float arrays, one per input text.
+        Returns an empty list if embedding completely fails.
+        """
+        for attempt in range(1, 4):
+            try:
+                response = self.gemini_client.models.embed_content(
+                    model="gemini-embedding-2",
+                    contents=texts,
+                    config=types.EmbedContentConfig(
+                        task_type="RETRIEVAL_DOCUMENT"
+                    )
+                )
+                embeddings = [emb.values for emb in response.embeddings]
+
+                if len(embeddings) == len(texts):
+                    return embeddings
+
+                logger.warning(
+                    f"[Ingestor] Embedding count mismatch: got {len(embeddings)} "
+                    f"for {len(texts)} texts (attempt {attempt}/3)"
+                )
+
+            except Exception as e:
+                logger.warning(
+                    f"[Ingestor] Embedding API error on attempt {attempt}/3: {e}"
+                )
+
+        # All retries failed — fall back to one-by-one calls
+        logger.warning(
+            f"[Ingestor] Batch embed failed after 3 attempts. "
+            f"Falling back to single embedding calls."
+        )
+        results = []
+        for i, text in enumerate(texts):
+            try:
+                response = self.gemini_client.models.embed_content(
+                    model="gemini-embedding-2",
+                    contents=[text],
+                    config=types.EmbedContentConfig(
+                        task_type="RETRIEVAL_DOCUMENT"
+                    )
+                )
+                if response.embeddings:
+                    results.append(response.embeddings[0].values)
+                else:
+                    logger.error(
+                        f"[Ingestor] Single embed returned empty for chunk {i}"
+                    )
+                    return []  # Abort — partial embeddings corrupt the index
+            except Exception as e:
+                logger.error(
+                    f"[Ingestor] Single embed failed for chunk {i}: {e}"
+                )
+                return []
+
+        return results

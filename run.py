@@ -1,3 +1,8 @@
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(message)s"
+)
 from app.agents.fetcher import FetcherAgent
 from app.agents.reviewer import ReviewerAgent
 from app.agents.poster import PosterAgent
@@ -5,10 +10,10 @@ from app.core.evaluator import EvaluatorAgent
 from app.db.database import init_db, SessionLocal
 from app.db.crud import save_review, save_evaluation_metrics
 
-# ── Configure these two lines ──────────────────────────────
+# ──────────────────────────────
 REPO      = "vaishnavbhosale/test-pr-review"
 PR_NUMBER = 5
-# ───────────────────────────────────────────────────────────
+# ──────────────────────────────
 
 def main():
     print(f"\nPR Review Agent")
