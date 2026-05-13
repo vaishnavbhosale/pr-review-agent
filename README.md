@@ -362,6 +362,20 @@ Open a PR on the repository — the system reviews it automatically.
 
 ---
 
+## Key Learnings
+
+- Context is everything in RAG — AST chunking made a noticeable difference.
+- Building evaluation early helps iterate faster.
+- Production AI needs strong error handling and fallbacks.
+
+## Future Improvements
+
+- Incremental ingestion using GitHub push webhooks
+- Full Agentic Reviewer using LangGraph
+- Hybrid Search (BM25 + Vector) + Reranking
+- Integration with Ragas for advanced evaluation
+- User feedback collection (thumbs up/down)
+
 ## Known Limitations and Planned Improvements
 
 **Short term**
