@@ -12,14 +12,12 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# Files worth indexing for code review context
 INDEXABLE_EXTENSIONS = {
     ".py", ".js", ".ts", ".java", ".go",
     ".rb", ".rs", ".cpp", ".c", ".cs",
     ".jsx", ".tsx", ".vue", ".swift"
 }
 
-# Files to skip
 SKIP_PATTERNS = [
     "node_modules", "__pycache__", ".git",
     "dist", "build", ".next", "venv",
@@ -29,27 +27,13 @@ SKIP_PATTERNS = [
 
 
 class CodebaseIngestor:
-    """
-    Ingests a GitHub repository's codebase into ChromaDB.
-
-    Splits code files into function-level chunks using AST parsing
-    so we never split a function in half. Falls back to line-based
-    chunking for non-Python files.
-
-    This runs once per repo and updates when main branch changes.
-    """
 
     def __init__(self):
         self.github_client = Github(settings.GITHUB_TOKEN)
-        # Pass API key explicitly so auth failures surface immediately.
         self.gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.chroma_client = chromadb.PersistentClient(path="./codebase_index")
 
     def get_or_create_collection(self, repo_name: str):
-        """
-        Each repository gets its own ChromaDB collection.
-        Collection name is sanitised repo name.
-        """
         collection_name = repo_name.replace("/", "__").replace("-", "_")
         return self.chroma_client.get_or_create_collection(
             name=collection_name,
@@ -57,10 +41,6 @@ class CodebaseIngestor:
         )
 
     def ingest_repo(self, repo_name: str, branch: str = "main") -> dict:
-        """
-        Main entry point. Fetches all code files from the repo
-        and indexes them into ChromaDB.
-        """
         logger.info(f"[Ingestor] Starting ingestion for {repo_name} branch {branch}")
 
         repo = self.github_client.get_repo(repo_name)
@@ -88,10 +68,6 @@ class CodebaseIngestor:
         }
 
     def _get_all_files(self, repo, branch: str) -> dict:
-        """
-        Recursively fetches all indexable code files from the repo.
-        Returns dict of filepath -> content.
-        """
         files = {}
 
         def fetch_contents(path=""):
@@ -123,34 +99,18 @@ class CodebaseIngestor:
         return files
 
     def _chunk_file(self, filepath: str, content: str) -> list:
-        """
-        Splits a file into meaningful chunks.
-
-        For Python files: uses AST to split by function and class.
-        For other files: falls back to line-based chunking with overlap.
-        """
         if filepath.endswith(".py"):
             return self._chunk_python_ast(filepath, content)
         else:
             return self._chunk_by_lines(filepath, content)
 
     def _chunk_python_ast(self, filepath: str, content: str) -> list:
-        """
-        Uses Python's built-in AST module to extract complete
-        functions and classes as chunks.
-
-        Why AST and not character splitting:
-        Character splitting at 500 chars might cut a function at line 8
-        of a 20-line function. The AI then sees broken, unrunnable code.
-        AST splitting gives the AI complete, syntactically valid units.
-        """
-        # FIX 1: Correct indentation throughout this method (was broken in previous version)
         chunks = []
 
         try:
             tree = ast.parse(content)
             lines = content.split("\n")
-            seen_ranges = set()  # FIX 2: track ranges to avoid duplicate chunks
+            seen_ranges = set()
 
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -158,9 +118,6 @@ class CodebaseIngestor:
                     end_line = node.end_lineno
                     range_key = (start_line, end_line)
 
-                    # Skip if we already captured this exact range.
-                    # ast.walk visits both a ClassDef and its nested methods,
-                    # which can produce overlapping ranges for tiny files.
                     if range_key in seen_ranges:
                         continue
                     seen_ranges.add(range_key)
@@ -168,7 +125,6 @@ class CodebaseIngestor:
                     chunk_lines = lines[start_line:end_line]
                     chunk_text = "\n".join(chunk_lines)
 
-                    # Skip tiny stubs
                     if len(chunk_text.strip()) < 50:
                         continue
 
@@ -182,13 +138,9 @@ class CodebaseIngestor:
                     })
 
         except SyntaxError:
-            # If AST parsing fails, fall back to line chunking
             logger.warning(f"[Ingestor] AST parse failed for {filepath}, using line chunking")
             return self._chunk_by_lines(filepath, content)
 
-        # FIX 3: Only add full-file chunk when NO AST chunks were found.
-        # Previously this always ran for small files, producing a chunk with
-        # identical text to the only AST chunk → same MD5 → ChromaDB duplicate ID crash.
         if not chunks and len(content) < 5000:
             chunks.append({
                 "text": content,
@@ -202,10 +154,6 @@ class CodebaseIngestor:
         return chunks
 
     def _chunk_by_lines(self, filepath: str, content: str) -> list:
-        """
-        Simple line-based chunking with overlap for non-Python files.
-        chunk_size=60 lines, overlap=10 lines.
-        """
         lines = content.split("\n")
         chunks = []
         chunk_size = 60
@@ -231,9 +179,6 @@ class CodebaseIngestor:
         return chunks
 
     def _store_chunks(self, collection, repo_name: str, filepath: str, chunks: list):
-        """
-        Embeds and stores chunks in ChromaDB.
-        """
         texts = [c["text"] for c in chunks]
 
         embeddings = self._get_embeddings_safe(texts)
@@ -255,10 +200,6 @@ class CodebaseIngestor:
         metadatas = []
 
         for chunk in chunks:
-            # FIX 4: Include type and name in the hash string so two chunks
-            # that share the same start_line (e.g. a function chunk and a
-            # module chunk covering the same lines) always produce different
-            # IDs and never collide in ChromaDB upsert.
             unique_str = (
                 f"{repo_name}:{chunk['filepath']}:"
                 f"{chunk['start_line']}:{chunk['type']}:{chunk['name']}"
@@ -287,13 +228,6 @@ class CodebaseIngestor:
         )
 
     def _get_embeddings_safe(self, texts: list[str]) -> list:
-        """
-        Calls the Gemini batch embed API with retry on count mismatch,
-        then falls back to one-by-one embedding if retries are exhausted.
-
-        Returns a list of float arrays, one per input text.
-        Returns an empty list if embedding completely fails.
-        """
         for attempt in range(1, 4):
             try:
                 response = self.gemini_client.models.embed_content(
@@ -318,7 +252,6 @@ class CodebaseIngestor:
                     f"[Ingestor] Embedding API error on attempt {attempt}/3: {e}"
                 )
 
-        # All retries failed — fall back to one-by-one calls
         logger.warning(
             f"[Ingestor] Batch embed failed after 3 attempts. "
             f"Falling back to single embedding calls."
@@ -339,7 +272,7 @@ class CodebaseIngestor:
                     logger.error(
                         f"[Ingestor] Single embed returned empty for chunk {i}"
                     )
-                    return []  # Abort — partial embeddings corrupt the index
+                    return []
             except Exception as e:
                 logger.error(
                     f"[Ingestor] Single embed failed for chunk {i}: {e}"

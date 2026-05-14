@@ -7,7 +7,6 @@ from app.config import settings
 from app.core.orchestrator import run_pipeline
 from app.db.database import init_db
 
-# Configure logging for the entire application
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -33,17 +32,6 @@ app = FastAPI(
 
 
 def verify_github_signature(payload: bytes, signature: str) -> bool:
-    """
-    Verifies that the webhook request actually came from GitHub.
-
-    GitHub signs every webhook payload with your secret using HMAC-SHA256.
-    We compute the expected signature and compare it to what GitHub sent.
-    If they match, the request is genuine. If not, we reject it.
-
-    This prevents anyone on the internet from triggering reviews
-    by sending fake webhook requests to our server.
-    """
-
     expected_signature = "sha256=" + hmac.new(
         settings.GITHUB_WEBHOOK_SECRET.encode("utf-8"),
         payload,
@@ -52,13 +40,9 @@ def verify_github_signature(payload: bytes, signature: str) -> bool:
 
     return hmac.compare_digest(expected_signature, signature)
 
+
 @app.post("/ingest/{repo_owner}/{repo_name}")
 async def ingest_repo(repo_owner: str, repo_name: str, background_tasks: BackgroundTasks):
-    """
-    Triggers codebase ingestion for a repository.
-    Call this once per repo before reviews start.
-    Also call when main branch is updated.
-    """
     from app.rag.ingestor import CodebaseIngestor
 
     full_repo_name = f"{repo_owner}/{repo_name}"
@@ -80,15 +64,13 @@ async def ingest_repo(repo_owner: str, repo_name: str, background_tasks: Backgro
 
 @app.get("/health")
 async def health_check():
-    """
-    Health check endpoint.
-    Used by Docker and load balancers to verify the server is running.
-    """
     return {
         "status": "healthy",
         "service": "PR Review Agent",
         "version": "1.0.0"
     }
+
+
 @app.get("/metrics")
 async def get_metrics():
     from app.db.database import SessionLocal
@@ -111,26 +93,9 @@ async def github_webhook(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """
-    Receives GitHub webhook events.
-
-    GitHub sends a POST request here whenever something happens
-    in a repository that has this webhook configured.
-
-    We only care about pull_request events with action
-    'opened' or 'synchronize'. We ignore everything else.
-
-    We respond with 202 Accepted immediately, then process
-    the review in the background so GitHub does not time out.
-    """
-
-    # Step 1 — Read the raw request body
     payload_bytes = await request.body()
-
-    # Step 2 — Get the signature GitHub sent in the header
     github_signature = request.headers.get("X-Hub-Signature-256", "")
 
-    # Step 3 — Verify the signature
     if not verify_github_signature(payload_bytes, github_signature):
         logger.warning(
             "[Webhook] Rejected request — invalid signature. "
@@ -141,25 +106,18 @@ async def github_webhook(
             detail="Invalid webhook signature"
         )
 
-    # Step 4 — Get the event type from the header
     event_type = request.headers.get("X-GitHub-Event", "")
-
-    # Step 5 — Parse the JSON payload
     payload = await request.json()
 
-    # Step 6 — Only process pull request events
     if event_type != "pull_request":
         logger.info(f"[Webhook] Ignoring event type: {event_type}")
         return {"status": "ignored", "reason": f"Event type '{event_type}' not handled"}
 
-    # Step 7 — Only process opened or updated PRs
     action = payload.get("action", "")
-
     if action not in ("opened", "synchronize"):
         logger.info(f"[Webhook] Ignoring pull_request action: {action}")
         return {"status": "ignored", "reason": f"Action '{action}' not handled"}
 
-    # Step 8 — Extract PR details
     pr_number = payload["pull_request"]["number"]
     repo_name = payload["repository"]["full_name"]
 
@@ -168,9 +126,6 @@ async def github_webhook(
         f"Repo: {repo_name} | PR: #{pr_number} | Action: {action}"
     )
 
-    # Step 9 — Queue the pipeline as a background task
-    # We return 202 immediately so GitHub does not time out
-    # The actual review happens asynchronously after this response
     background_tasks.add_task(run_pipeline, repo_name, pr_number)
 
     logger.info(f"[Webhook] Pipeline queued for PR #{pr_number}")

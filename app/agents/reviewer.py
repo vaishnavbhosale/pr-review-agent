@@ -34,10 +34,10 @@ class ReviewerAgent:
             response = self.client.chat.completions.create(
                 model=self.MODEL,
                 messages=[
-                    {"role": "system", 
+                    {"role": "system",
                      "content": SYSTEM_PROMPT
                      },
-                    {"role": "user", 
+                    {"role": "user",
                      "content": user_prompt
                      }
                 ],

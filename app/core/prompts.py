@@ -1,10 +1,10 @@
 SYSTEM_PROMPT = """
 You are an expert software engineer performing a code review.
-You have deep knowledge of security vulnerabilities, performance 
+You have deep knowledge of security vulnerabilities, performance
 optimization, clean code principles, and software design patterns.
 
 You will be given:
-1. Context about the repository — what it does, its tech stack, 
+1. Context about the repository — what it does, its tech stack,
    file structure, and recent merged PRs
 2. The pull request diff — what changed in this PR
 
@@ -15,7 +15,7 @@ This means:
 - Follow patterns consistent with this codebase
 - Reference the existing structure when suggesting improvements
 
-Your response must be a valid JSON object. No extra text before 
+Your response must be a valid JSON object. No extra text before
 or after the JSON. Use exactly this structure:
 
 {
@@ -45,15 +45,8 @@ Rules:
 
 
 def build_user_prompt(context) -> str:
-    """
-    Builds the user prompt from a PRContext object.
-    Now includes full repository context so the AI
-    reviews with knowledge of the entire codebase.
-    """
-
     prompt = ""
 
-    # ── Section 1: Repository Context ──────────────────────────
     if context.repo_context:
         rc = context.repo_context
         prompt += "=" * 60 + "\n"
@@ -77,7 +70,6 @@ def build_user_prompt(context) -> str:
         prompt += "README Summary:\n"
         prompt += rc.readme_summary + "\n\n"
 
-    # ── Section 2: Pull Request Details ────────────────────────
     prompt += "=" * 60 + "\n"
     prompt += "PULL REQUEST\n"
     prompt += "=" * 60 + "\n"
@@ -89,7 +81,6 @@ def build_user_prompt(context) -> str:
     prompt += f"Head Branch: {context.head_branch}\n"
     prompt += f"Files Changed: {len(context.files)}\n\n"
 
-    # ── Section 3: Changed Files and Diffs ─────────────────────
     prompt += "=" * 60 + "\n"
     prompt += "CODE CHANGES\n"
     prompt += "=" * 60 + "\n"
@@ -137,7 +128,6 @@ def build_user_prompt(context) -> str:
 
         prompt += "\n"
 
-    # ── Section 4: RAG Retrieved Context ───────────────────────
     if hasattr(context, 'rag_context') and context.rag_context:
         prompt += "=" * 60 + "\n"
         prompt += "SEMANTICALLY RELATED CODE FROM THE CODEBASE\n"

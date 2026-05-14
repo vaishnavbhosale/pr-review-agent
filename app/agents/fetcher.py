@@ -48,7 +48,7 @@ class FetcherAgent:
             head_branch=pr.head.ref,
             files=changed_files,
             repo_context=repo_context,
-            rag_context=None,  # FIX: explicitly initialise before RAG block
+            rag_context=None,
         )
 
         try:
@@ -67,8 +67,6 @@ class FetcherAgent:
                 ingestor.ingest_repo(repo_name)
                 logger.info(f"[FetcherAgent] Auto-ingestion complete")
 
-                # FIX: Re-fetch the collection after ingestion so retrieval
-                # actually uses the newly built index, not the empty one.
                 collection = retriever.get_collection(context.repo_name)
 
                 if collection is None or collection.count() == 0:
@@ -83,8 +81,6 @@ class FetcherAgent:
                 context.rag_context = rag_context
                 logger.info(f"[FetcherAgent] RAG context retrieved successfully")
             else:
-                # FIX: Set explicitly to None and log a warning so downstream
-                # agents know to expect a diff-only review.
                 context.rag_context = None
                 logger.warning(
                     f"[FetcherAgent] RAG retrieval returned empty "
@@ -93,7 +89,7 @@ class FetcherAgent:
 
         except Exception as e:
             logger.warning(f"[FetcherAgent] RAG failed: {e}")
-            context.rag_context = None  # FIX: guarantee field is always set
+            context.rag_context = None
 
         logger.info(
             f"[FetcherAgent] Done. "

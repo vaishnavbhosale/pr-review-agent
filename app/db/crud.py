@@ -13,11 +13,6 @@ def save_review(
     posted: bool,
     comment_evaluations: list = None
 ) -> PRReview:
-    """
-    Saves a completed PR review to the database.
-    Also saves evaluation results for each comment
-    if comment_evaluations is provided.
-    """
 
     logger.info(
         f"[DB] Saving review for PR #{context.pr_number} "
@@ -41,10 +36,7 @@ def save_review(
 
         logger.info(f"[DB] PRReview created with ID: {review.id}")
 
-        # Save each comment with its evaluation result
         for i, c in enumerate(result.comments):
-
-            # Get evaluation for this comment if available
             is_valid = None
             if comment_evaluations and i < len(comment_evaluations):
                 is_valid = comment_evaluations[i]
@@ -82,10 +74,6 @@ def save_evaluation_metrics(
     review_id: int,
     metrics: dict
 ) -> EvaluationMetrics:
-    """
-    Saves computed evaluation metrics for a review.
-    One metrics row per review.
-    """
 
     logger.info(f"[DB] Saving evaluation metrics for review {review_id}")
 
@@ -124,9 +112,6 @@ def get_review_by_pr(
     repo_name: str,
     pr_number: int
 ) -> PRReview:
-    """
-    Fetches the most recent review for a specific PR.
-    """
 
     review = db.query(PRReview).filter(
         PRReview.repo_name == repo_name,
@@ -150,9 +135,6 @@ def get_all_reviews(
     db: Session,
     limit: int = 50
 ) -> list:
-    """
-    Fetches the most recent reviews across all repositories.
-    """
 
     reviews = db.query(PRReview).order_by(
         PRReview.created_at.desc()
@@ -164,9 +146,6 @@ def get_all_reviews(
 
 
 def get_stats(db: Session) -> dict:
-    """
-    Returns summary statistics across all reviews.
-    """
 
     total = db.query(PRReview).count()
 
@@ -201,10 +180,6 @@ def get_stats(db: Session) -> dict:
 
 
 def get_evaluation_report(db: Session) -> dict:
-    """
-    Returns aggregated evaluation metrics across all reviews.
-    This is your AI quality dashboard.
-    """
 
     all_metrics = db.query(EvaluationMetrics).all()
 
