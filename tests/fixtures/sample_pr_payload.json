@@ -1,0 +1,21 @@
+{
+  "action": "opened",
+  "number": 1,
+  "pull_request": {
+    "number": 1,
+    "title": "Fix login bug",
+    "body": "This PR fixes the login redirect issue",
+    "user": {
+      "login": "testuser"
+    },
+    "base": {
+      "ref": "main"
+    },
+    "head": {
+      "ref": "fix-login"
+    }
+  },
+  "repository": {
+    "full_name": "test-owner/test-repo"
+  }
+}

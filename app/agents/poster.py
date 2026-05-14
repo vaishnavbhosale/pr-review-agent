@@ -32,10 +32,7 @@ class PosterAgent:
             logger.error(f"[PosterAgent] Could not access PR: {e}")
             return False
 
-        # FIX: Detect self-PR before choosing event type
-        # GitHub API returns 422 if you try to APPROVE or REQUEST_CHANGES
-        # on a PR you authored yourself. We detect this early and switch
-        # to COMMENT to avoid the error entirely.
+
         try:
             bot_user = self.client.get_user().login
         except GithubException as e:

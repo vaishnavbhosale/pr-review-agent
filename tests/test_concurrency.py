@@ -1,7 +1,6 @@
 import sys
 import os
 
-# Ensure app can be imported from the root directory
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
@@ -49,7 +48,7 @@ async def main():
         tasks = [fire_webhook(i, client) for i in range(10, 13)]
         await asyncio.gather(*tasks)
     
-    print("\n✅ TEST PASSED: Webhooks fired. Check your FastAPI logs to watch the orchestrator queue them up safely!")
+    print("\n TEST PASSED: Webhooks fired. Check your FastAPI logs to watch the orchestrator queue them up safely!")
 
 if __name__ == "__main__":
     asyncio.run(main())

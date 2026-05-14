@@ -1,7 +1,6 @@
 import sys
 import os
 
-# Ensure app can be imported
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.schemas import PRContext, ChangedFile, ReviewResult, ReviewComment
@@ -10,7 +9,7 @@ from app.core.evaluator import EvaluatorAgent
 def test_hallucination_detection():
     print("--- Running Hallucination Detection Test ---")
     
-    # 1. Mock a PR context with a file that only has 10 lines
+    
     fake_diff = "\n".join([f"+ line {i}" for i in range(1, 11)])
     changed_file = ChangedFile(
         filename="src/auth.py", 
@@ -23,7 +22,7 @@ def test_hallucination_detection():
         files=[changed_file]
     )
 
-    # 2. Mock an AI review where one comment is valid, and one is a hallucination
+   
     valid_comment = ReviewComment(
         filename="src/auth.py", line=5,  # Valid: line 5 exists
         issue="Minor issue", suggestion="Fix this", severity="suggestion"
@@ -42,7 +41,7 @@ def test_hallucination_detection():
         comments=[valid_comment, hallucinated_comment, hallucinated_file]
     )
 
-    # 3. Run the Evaluator
+   
     evaluator = EvaluatorAgent()
     metrics, evaluations = evaluator.run(context, result)
 

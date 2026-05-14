@@ -11,8 +11,8 @@ from app.db.database import init_db, SessionLocal
 from app.db.crud import save_review, save_evaluation_metrics
 
 # ──────────────────────────────
-REPO      = "vaishnavbhosale/test-pr-review"
-PR_NUMBER = 5
+REPO      = "vaishnavbhosale/pr-review-agent"
+PR_NUMBER = 2
 # ──────────────────────────────
 
 def main():

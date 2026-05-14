@@ -25,7 +25,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
         try:
             logger.info(f"[Orchestrator] Attempt {attempt} of {MAX_RETRIES + 1}")
 
-            # ── Stage 1: Fetch ──────────────────────────────
             logger.info("[Orchestrator] Stage 1 — Fetching PR data")
 
             fetcher = FetcherAgent()
@@ -38,7 +37,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
                 f"Fetched {len(context.files)} files"
             )
 
-            # ── Stage 2: Review ─────────────────────────────
             logger.info("[Orchestrator] Stage 2 — Reviewing code with AI")
 
             if getattr(settings, 'AGENTIC_MODE', False):
@@ -57,7 +55,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
                 f"Comments: {len(result.comments)}"
             )
 
-            # ── Stage 3: Evaluate ───────────────────────────
             logger.info("[Orchestrator] Stage 3 — Evaluating review quality")
 
             evaluator = EvaluatorAgent()
@@ -72,7 +69,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
                 f"Coverage: {metrics['coverage_rate']}%"
             )
 
-            # ── Stage 4: Post ───────────────────────────────
             logger.info("[Orchestrator] Stage 4 — Posting review to GitHub")
 
             poster = PosterAgent()
@@ -85,7 +81,6 @@ async def run_pipeline(repo_name: str, pr_number: int):
                 f"Posted: {success}"
             )
 
-            # ── Stage 5: Save to database ───────────────────
             logger.info("[Orchestrator] Stage 5 — Saving to database")
 
             db = SessionLocal()

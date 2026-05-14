@@ -3,14 +3,11 @@ import os
 from dotenv import load_dotenv
 import chromadb
 from app.core.schemas import PRContext
-
-# 1. Import the Gemini SDK instead of sentence_transformers
 from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables (Make sure your .env file has GEMINI_API_KEY)
 load_dotenv()
 
 class CodebaseRetriever:
@@ -20,7 +17,6 @@ class CodebaseRetriever:
     """
 
     def __init__(self):
-        # 2. Initialize the Gemini client 
         self.gemini_client = genai.Client()
         self.chroma_client = chromadb.PersistentClient(path="./codebase_index")
 
@@ -88,6 +84,14 @@ class CodebaseRetriever:
 
         if not results["documents"][0]:
             return ""
+
+# Debug retrieved chunks
+        for i, metadata in enumerate(results["metadatas"][0]):
+          logger.info(
+        f"[Retriever] Chunk {i+1}: "
+        f"{metadata['filepath']} "
+        f"(lines {metadata['start_line']}-{metadata['end_line']})"
+        )
 
         # Format retrieved chunks as context
         context_parts = ["RELEVANT CODEBASE CONTEXT (retrieved by semantic similarity):"]
