@@ -50,11 +50,16 @@ class CodebaseIngestor:
         logger.info(f"[Ingestor] Found {len(all_files)} indexable files")
 
         total_chunks = 0
+        all_chunks = []
         for file_path, file_content in all_files.items():
             chunks = self._chunk_file(file_path, file_content)
             if chunks:
                 self._store_chunks(collection, repo_name, file_path, chunks)
+                all_chunks.extend(chunks)
                 total_chunks += len(chunks)
+
+        if all_chunks:
+            self._save_bm25_corpus(repo_name, all_chunks)
 
         logger.info(
             f"[Ingestor] Done. Indexed {len(all_files)} files, "
@@ -280,3 +285,21 @@ class CodebaseIngestor:
                 return []
 
         return results
+
+    def _safe_name(self, repo_name: str) -> str:
+        return repo_name.replace("/", "__").replace("-", "_")
+
+    def _save_bm25_corpus(self, repo_name: str, all_chunks: list):
+        corpus = []
+        for chunk in all_chunks:
+            corpus.append({
+                "text": chunk["text"],
+                "filepath": chunk["filepath"],
+                "start_line": chunk["start_line"],
+                "end_line": chunk["end_line"],
+            })
+        import json
+        corpus_path = f"./codebase_index/bm25_{self._safe_name(repo_name)}.json"
+        with open(corpus_path, "w", encoding="utf-8") as f:
+            json.dump(corpus, f, ensure_ascii=False)
+        logger.info(f"[Ingestor] Saved BM25 corpus ({len(corpus)} docs) to {corpus_path}")
