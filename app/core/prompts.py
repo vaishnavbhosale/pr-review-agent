@@ -1,3 +1,5 @@
+from app.config import settings
+
 SYSTEM_PROMPT = """
 You are an expert software engineer performing a code review.
 You have deep knowledge of security vulnerabilities, performance
@@ -46,6 +48,7 @@ Rules:
 
 def build_user_prompt(context) -> str:
     prompt = ""
+    context.truncated_files = []
 
     if context.repo_context:
         rc = context.repo_context
@@ -116,13 +119,20 @@ def build_user_prompt(context) -> str:
 
         diff_lines = changed_file.patch.split("\n")
 
-        if len(diff_lines) > 300:
-            truncated = "\n".join(diff_lines[:300])
+        if len(diff_lines) > settings.MAX_DIFF_LINES_PER_FILE:
+            truncated = "\n".join(diff_lines[:settings.MAX_DIFF_LINES_PER_FILE])
             prompt += truncated
+            omitted = len(diff_lines) - settings.MAX_DIFF_LINES_PER_FILE
             prompt += (
-                f"\n... [diff truncated — "
-                f"{len(diff_lines) - 300} lines not shown] ...\n"
+                f"\n... [diff truncated — first {settings.MAX_DIFF_LINES_PER_FILE} lines shown, "
+                f"{omitted} lines omitted] ...\n"
             )
+            context.truncated_files.append({
+                "filename": changed_file.filename,
+                "total_lines": len(diff_lines),
+                "shown_lines": settings.MAX_DIFF_LINES_PER_FILE,
+                "omitted_lines": omitted
+            })
         else:
             prompt += changed_file.patch
 

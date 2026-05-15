@@ -25,6 +25,18 @@ class ReviewerAgent:
         prompt_length = len(user_prompt)
         logger.info(f"[ReviewerAgent] Prompt size: {prompt_length} characters")
 
+        if context.truncated_files:
+            truncated_count = len(context.truncated_files)
+            logger.warning(
+                f"[ReviewerAgent] WARNING: {truncated_count} file(s) were truncated. "
+                f"Review may be incomplete."
+            )
+            for tf in context.truncated_files:
+                logger.warning(
+                    f"  - {tf['filename']}: {tf['total_lines']} lines total, "
+                    f"only first {tf['shown_lines']} shown"
+                )
+
         if prompt_length > 100000:
             logger.warning(f"[ReviewerAgent] Prompt is very large. Consider chunking this PR.")
 

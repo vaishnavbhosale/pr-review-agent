@@ -35,6 +35,7 @@ class PRContext:
     rag_context: str = ""
     files: list = field(default_factory=list)
     repo_context: RepoContext = None
+    truncated_files: list = field(default_factory=list)
 
 
 class ReviewComment(BaseModel):

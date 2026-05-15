@@ -1,3 +1,5 @@
+import os
+import argparse
 import logging
 logging.basicConfig(
     level=logging.INFO,
@@ -10,12 +12,16 @@ from app.core.evaluator import EvaluatorAgent
 from app.db.database import init_db, SessionLocal
 from app.db.crud import save_review, save_evaluation_metrics
 
-# ──────────────────────────────
-REPO      = "vaishnavbhosale/pr-review-agent"
-PR_NUMBER = 2
-# ──────────────────────────────
+DEFAULT_REPO = "vaishnavbhosale/pr-review-agent"
 
 def main():
+    parser = argparse.ArgumentParser(description="Review a GitHub PR")
+    parser.add_argument("pr_number", type=int, help="Pull request number")
+    parser.add_argument("--repo", default=None, help="Override repo (default: env REPO or DEFAULT_REPO)")
+    args = parser.parse_args()
+
+    REPO      = args.repo or os.getenv("REPO") or DEFAULT_REPO
+    PR_NUMBER = args.pr_number
     print(f"\nPR Review Agent")
     print(f"Repo      : {REPO}")
     print(f"PR Number : #{PR_NUMBER}")
@@ -42,7 +48,7 @@ def main():
     print(f"      Coverage rate      : {metrics['coverage_rate']}%")
 
     print("\n[4/4] Posting review to GitHub...")
-    success = PosterAgent().run(context, result)
+    success = PosterAgent().run(context, result, evaluations)
     print(f"      Posted : {success}")
 
     print("\nSaving to database...")

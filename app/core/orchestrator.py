@@ -73,7 +73,7 @@ async def run_pipeline(repo_name: str, pr_number: int):
 
             poster = PosterAgent()
             success = await asyncio.to_thread(
-                poster.run, context, result
+                poster.run, context, result, comment_evaluations
             )
 
             logger.info(

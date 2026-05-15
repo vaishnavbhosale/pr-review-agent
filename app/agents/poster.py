@@ -11,8 +11,15 @@ class PosterAgent:
     def __init__(self):
         self.client = Github(settings.GITHUB_TOKEN)
 
-    def run(self, context: PRContext, result: ReviewResult) -> bool:
+    def run(self, context: PRContext, result: ReviewResult, comment_evaluations: list[bool] | None = None) -> bool:
         logger.info(f"[PosterAgent] Posting review for PR #{context.pr_number}")
+
+        valid_count = len(result.comments)
+        if comment_evaluations:
+            valid_count = sum(1 for v in comment_evaluations if v)
+            filtered_count = len(result.comments) - valid_count
+            if filtered_count > 0:
+                logger.info(f"[PosterAgent] Filtering out {filtered_count} hallucinated comments, keeping {valid_count} valid comments")
 
         try:
             repo = self.client.get_repo(context.repo_name)
@@ -40,8 +47,8 @@ class PosterAgent:
         else:
             review_event = "REQUEST_CHANGES"
 
-        summary_body = self._build_summary(context, result)
-        inline_comments = self._build_inline_comments(result)
+        summary_body = self._build_summary(context, result, comment_evaluations)
+        inline_comments = self._build_inline_comments(result, comment_evaluations)
 
         try:
             pr.create_review(
@@ -67,21 +74,29 @@ class PosterAgent:
                 logger.error(f"[PosterAgent] Fallback also failed: {e2}")
                 return False
 
-    def _build_summary(self, context: PRContext, result: ReviewResult) -> str:
+    def _build_summary(self, context: PRContext, result: ReviewResult, comment_evaluations: list[bool] | None = None) -> str:
         filled = "█" * result.overall_score
         empty = "░" * (10 - result.overall_score)
         score_bar = filled + empty
 
+        if comment_evaluations:
+            valid_comments = [
+                c for i, c in enumerate(result.comments)
+                if i < len(comment_evaluations) and comment_evaluations[i]
+            ]
+        else:
+            valid_comments = list(result.comments)
+
         critical_count = sum(
-            1 for c in result.comments
+            1 for c in valid_comments
             if c.severity == "critical"
         )
         warning_count = sum(
-            1 for c in result.comments
+            1 for c in valid_comments
             if c.severity == "warning"
         )
         suggestion_count = sum(
-            1 for c in result.comments
+            1 for c in valid_comments
             if c.severity == "suggestion"
         )
 
@@ -111,7 +126,7 @@ class PosterAgent:
 | 🔴 Critical | {critical_count} |
 | 🟡 Warning | {warning_count} |
 | 🟢 Suggestion | {suggestion_count} |
-| **Total** | **{len(result.comments)}** |
+| **Total** | **{len(valid_comments)}** |
 
 ---
 
@@ -124,6 +139,22 @@ class PosterAgent:
         for f in context.files:
             body += f"| `{f.filename}` | {f.status} | +{f.additions} | -{f.deletions} |\n"
 
+        if hasattr(context, 'truncated_files') and context.truncated_files:
+            body += """
+---
+
+### ⚠️ Review Limitation Notice
+
+**The following files were too large and have been partially reviewed:**
+"""
+            for tf in context.truncated_files:
+                pct = round((tf['omitted_lines'] / tf['total_lines']) * 100)
+                body += f"- `{tf['filename']}`: Only first {tf['shown_lines']} lines reviewed ({pct}% omitted)\n"
+
+            body += """
+*Important: Issues may exist in the un-reviewed portions of these files. Please review manually.*
+"""
+
         body += f"""
 ---
 
@@ -133,10 +164,18 @@ class PosterAgent:
 
         return body
 
-    def _build_inline_comments(self, result: ReviewResult) -> list:
+    def _build_inline_comments(self, result: ReviewResult, comment_evaluations: list[bool] | None = None) -> list:
         inline_comments = []
 
-        for comment in result.comments:
+        if comment_evaluations:
+            valid_comments = [
+                c for i, c in enumerate(result.comments)
+                if i < len(comment_evaluations) and comment_evaluations[i]
+            ]
+        else:
+            valid_comments = list(result.comments)
+
+        for comment in valid_comments:
             if comment.severity == "critical":
                 severity_label = "🔴 CRITICAL"
             elif comment.severity == "warning":

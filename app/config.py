@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./reviews.db"
     LOG_LEVEL: str = "INFO"
     AGENTIC_MODE: bool = False
+    MAX_DIFF_LINES_PER_FILE: int = 1000
 
     class Config:
         env_file = ".env"
