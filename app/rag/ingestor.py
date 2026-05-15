@@ -6,6 +6,7 @@ from pathlib import Path
 from github import Github
 import chromadb
 from app.config import settings
+from app.core.utils import safe_collection_name
 
 from google import genai
 from google.genai import types
@@ -34,7 +35,7 @@ class CodebaseIngestor:
         self.chroma_client = chromadb.PersistentClient(path="./codebase_index")
 
     def get_or_create_collection(self, repo_name: str):
-        collection_name = repo_name.replace("/", "__").replace("-", "_")
+        collection_name = safe_collection_name(repo_name)
         return self.chroma_client.get_or_create_collection(
             name=collection_name,
             metadata={"repo": repo_name}
@@ -286,9 +287,6 @@ class CodebaseIngestor:
 
         return results
 
-    def _safe_name(self, repo_name: str) -> str:
-        return repo_name.replace("/", "__").replace("-", "_")
-
     def _save_bm25_corpus(self, repo_name: str, all_chunks: list):
         corpus = []
         for chunk in all_chunks:
@@ -299,7 +297,7 @@ class CodebaseIngestor:
                 "end_line": chunk["end_line"],
             })
         import json
-        corpus_path = f"./codebase_index/bm25_{self._safe_name(repo_name)}.json"
+        corpus_path = f"./codebase_index/bm25_{safe_collection_name(repo_name)}.json"
         with open(corpus_path, "w", encoding="utf-8") as f:
             json.dump(corpus, f, ensure_ascii=False)
         logger.info(f"[Ingestor] Saved BM25 corpus ({len(corpus)} docs) to {corpus_path}")

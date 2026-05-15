@@ -5,6 +5,7 @@ import re
 from dotenv import load_dotenv
 import chromadb
 from app.core.schemas import PRContext
+from app.core.utils import safe_collection_name
 from google import genai
 from google.genai import types
 from rank_bm25 import BM25Okapi
@@ -21,11 +22,8 @@ class CodebaseRetriever:
         self.chroma_client = chromadb.PersistentClient(path="./codebase_index")
         self._bm25_cache = {}
 
-    def _safe_name(self, repo_name: str) -> str:
-        return repo_name.replace("/", "__").replace("-", "_")
-
     def get_collection(self, repo_name: str):
-        collection_name = self._safe_name(repo_name)
+        collection_name = safe_collection_name(repo_name)
         try:
             return self.chroma_client.get_collection(collection_name)
         except Exception:
@@ -38,7 +36,7 @@ class CodebaseRetriever:
         if repo_name in self._bm25_cache:
             return self._bm25_cache[repo_name]
 
-        corpus_path = f"./codebase_index/bm25_{self._safe_name(repo_name)}.json"
+        corpus_path = f"./codebase_index/bm25_{safe_collection_name(repo_name)}.json"
         if not os.path.exists(corpus_path):
             return None
 
