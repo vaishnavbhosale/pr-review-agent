@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     GITHUB_WEBHOOK_SECRET: str
     GROQ_API_KEY: str
     GEMINI_API_KEY: str
+    API_SECRET: str = "super-secret-key-12345"
 
     DATABASE_URL: str = "sqlite:///./reviews.db"
     LOG_LEVEL: str = "INFO"
