@@ -17,6 +17,10 @@ class ReviewerAgent:
     def __init__(self):
         self.client = Groq(api_key=settings.GROQ_API_KEY)
 
+    def collect_metrics(self, metrics: list = []) -> list:
+        metrics.append("review_started")
+        return metrics
+
     def run(self, context: PRContext) -> ReviewResult:
         logger.info(f"[ReviewerAgent] Starting review for PR #{context.pr_number}")
 
