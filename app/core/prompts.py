@@ -45,10 +45,9 @@ Rules:
 - Return ONLY the JSON. No markdown, no explanation.
 """
 
-
 def build_user_prompt(context) -> str:
     prompt = ""
-    context.truncated_files = []
+    local_truncated_files = []
 
     if context.repo_context:
         rc = context.repo_context
@@ -127,7 +126,7 @@ def build_user_prompt(context) -> str:
                 f"\n... [diff truncated — first {settings.MAX_DIFF_LINES_PER_FILE} lines shown, "
                 f"{omitted} lines omitted] ...\n"
             )
-            context.truncated_files.append({
+            local_truncated_files.append({
                 "filename": changed_file.filename,
                 "total_lines": len(diff_lines),
                 "shown_lines": settings.MAX_DIFF_LINES_PER_FILE,
@@ -144,6 +143,8 @@ def build_user_prompt(context) -> str:
         prompt += "(Retrieved based on similarity to this PR's changes)\n"
         prompt += "=" * 60 + "\n"
         prompt += context.rag_context + "\n\n"
+
+    context.truncated_files = local_truncated_files
 
     prompt += "\n" + "=" * 60 + "\n"
     prompt += "Provide your repo-aware structured JSON review now:\n"
