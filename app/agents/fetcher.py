@@ -11,24 +11,6 @@ class FetcherAgent:
     def __init__(self):
         self.client = Github(settings.GITHUB_TOKEN)
 
-    def fetch_all_pr_details(self, repo_name: str) -> list:
-        repo = self.client.get_repo(repo_name)
-        open_prs = repo.get_pulls(state="open")
-        details = []
-        for pr in open_prs:
-            pr_details = {
-                "number": pr.number,
-                "title": pr.title,
-            }
-            comments = pr.get_comments()
-            review_comments = pr.get_review_comments()
-            commits = pr.get_commits()
-            pr_details["comment_count"] = comments.totalCount
-            pr_details["review_count"] = review_comments.totalCount
-            pr_details["commit_count"] = commits.totalCount
-            details.append(pr_details)
-        return details
-
     def run(self, repo_name: str, pr_number: int) -> PRContext:
         logger.info(f"[FetcherAgent] Starting fetch for PR #{pr_number} in {repo_name}")
 
